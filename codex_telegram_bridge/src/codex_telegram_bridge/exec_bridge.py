@@ -14,7 +14,8 @@ import threading
 import time
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any
+from collections.abc import Callable
 
 import typer
 
@@ -34,10 +35,10 @@ def log(msg: str) -> None:
     log_debug(line)
 
 
-_file_logger: Optional[logging.Logger] = None
+_file_logger: logging.Logger | None = None
 
 
-def setup_file_logger(path: Optional[str]) -> None:
+def setup_file_logger(path: str | None) -> None:
     global _file_logger
     if not path:
         return
@@ -56,7 +57,7 @@ def log_debug(msg: str) -> None:
     _file_logger.debug(msg)
 
 
-def _one_line(text: Optional[str]) -> str:
+def _one_line(text: str | None) -> str:
     if text is None:
         return "None"
     return text.replace("\r", "\\r").replace("\n", "\\n")
@@ -77,9 +78,9 @@ def _send_markdown(
     *,
     chat_id: int,
     text: str,
-    reply_to_message_id: Optional[int] = None,
+    reply_to_message_id: int | None = None,
     disable_notification: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     rendered_text, entities = render_markdown(text)
     if len(rendered_text) > TELEGRAM_MARKDOWN_LIMIT:
         sep = "\n" + ELLIPSIS + "\n"
@@ -104,8 +105,8 @@ class ProgressEditor:
         chat_id: int,
         message_id: int,
         edit_every_s: float,
-        initial_text: Optional[str] = None,
-        initial_entities: Optional[list[dict[str, Any]]] = None,
+        initial_text: str | None = None,
+        initial_entities: list[dict[str, Any]] | None = None,
     ) -> None:
         self.bot = bot
         self.chat_id = chat_id
@@ -113,8 +114,8 @@ class ProgressEditor:
         self.edit_every_s = edit_every_s
 
         self._lock = threading.Lock()
-        self._pending: Optional[tuple[str, Optional[list[dict[str, Any]]]]] = None
-        self._last_sent: Optional[tuple[str, Optional[list[dict[str, Any]]]]] = None
+        self._pending: tuple[str, list[dict[str, Any]] | None] | None = None
+        self._last_sent: tuple[str, list[dict[str, Any]] | None] | None = None
         self._last_edit_at = 0.0
 
         if initial_text is not None:
@@ -125,7 +126,7 @@ class ProgressEditor:
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
-    def set(self, text: str, entities: Optional[list[dict[str, Any]]] = None) -> None:
+    def set(self, text: str, entities: list[dict[str, Any]] | None = None) -> None:
         text = _clamp_tg_text(text)
         with self._lock:
             self._pending = (text, entities)
@@ -139,7 +140,7 @@ class ProgressEditor:
         self._stop.set()
         self._thread.join(timeout=1.0)
 
-    def _edit(self, text: str, entities: Optional[list[dict[str, Any]]]) -> None:
+    def _edit(self, text: str, entities: list[dict[str, Any]] | None) -> None:
         try:
             self.bot.edit_message_text(
                 chat_id=self.chat_id,
@@ -161,7 +162,7 @@ class ProgressEditor:
 
     def _run(self) -> None:
         while not self._stop.is_set():
-            to_send: Optional[tuple[str, Optional[list[dict[str, Any]]]]] = None
+            to_send: tuple[str, list[dict[str, Any]] | None] | None = None
             now = time.monotonic()
             with self._lock:
                 if self._pending is not None and (now - self._last_edit_at) >= self.edit_every_s:
@@ -184,7 +185,7 @@ class CodexExecRunner:
       - resume: codex exec --json ... resume <SESSION_ID> -
     """
 
-    def __init__(self, codex_cmd: str, workspace: Optional[str], extra_args: list[str]) -> None:
+    def __init__(self, codex_cmd: str, workspace: str | None, extra_args: list[str]) -> None:
         self.codex_cmd = codex_cmd
         self.workspace = workspace
         self.extra_args = extra_args
@@ -202,9 +203,9 @@ class CodexExecRunner:
     def run(
         self,
         prompt: str,
-        session_id: Optional[str],
-        on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
-    ) -> Tuple[str, str, bool]:
+        session_id: str | None,
+        on_event: Callable[[dict[str, Any]], None] | None = None,
+    ) -> tuple[str, str, bool]:
         """
         Returns (session_id, final_agent_message_text)
         """
@@ -246,8 +247,8 @@ class CodexExecRunner:
         t = threading.Thread(target=_drain_stderr, daemon=True)
         t.start()
 
-        found_session: Optional[str] = session_id
-        last_agent_text: Optional[str] = None
+        found_session: str | None = session_id
+        last_agent_text: str | None = None
         saw_agent_message = False
 
         cli_last_turn = None
@@ -296,9 +297,9 @@ class CodexExecRunner:
     def run_serialized(
         self,
         prompt: str,
-        session_id: Optional[str],
-        on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
-    ) -> Tuple[str, str, bool]:
+        session_id: str | None,
+        on_event: Callable[[dict[str, Any]], None] | None = None,
+    ) -> tuple[str, str, bool]:
         """
         If resuming, serialize per-session.
         """
@@ -334,17 +335,17 @@ def run(
         "--ignore-backlog/--process-backlog",
         help="Skip pending Telegram updates that arrived before startup.",
     ),
-    log_file: Optional[str] = typer.Option(
+    log_file: str | None = typer.Option(
         "exec_bridge.log",
         "--log-file",
         help="Write detailed debug logs to this file (set to empty to disable).",
     ),
-    workdir: Optional[str] = typer.Option(
+    workdir: str | None = typer.Option(
         None,
         "--workdir",
         help="Override codex workspace (--cd) for this exec-bridge run.",
     ),
-    model: Optional[str] = typer.Option(
+    model: str | None = typer.Option(
         None,
         "--model",
         help="Codex model to pass to `codex exec`.",
@@ -402,7 +403,7 @@ def run(
 
     max_workers = config.get("max_workers")
     pool = ThreadPoolExecutor(max_workers=max_workers or 4)
-    offset: Optional[int] = None
+    offset: int | None = None
     ignore_backlog = bool(ignore_backlog)
 
     if ignore_backlog:
@@ -427,7 +428,7 @@ def run(
     else:
         log("[startup] no chat_id configured; skipping startup message")
 
-    def handle(chat_id: int, user_msg_id: int, text: str, resume_session: Optional[str]) -> None:
+    def handle(chat_id: int, user_msg_id: int, text: str, resume_session: str | None) -> None:
         log(
             "[handle] start "
             f"chat_id={chat_id} user_msg_id={user_msg_id} resume_session={resume_session!r}"
@@ -441,11 +442,11 @@ def run(
         loud_final = final_notify
 
         started_at = time.monotonic()
-        session_box: dict[str, Optional[str]] = {"id": resume_session}
+        session_box: dict[str, str | None] = {"id": resume_session}
         progress_renderer = ExecProgressRenderer(max_actions=5)
 
-        progress_id: Optional[int] = None
-        progress: Optional[ProgressEditor] = None
+        progress_id: int | None = None
+        progress: ProgressEditor | None = None
         try:
             initial_text = progress_renderer.render_progress(0.0)
             initial_rendered, initial_entities = render_markdown(initial_text)
@@ -472,7 +473,7 @@ def run(
                 initial_entities=initial_entities or None,
             )
 
-        def on_event(evt: Dict[str, Any]) -> None:
+        def on_event(evt: dict[str, Any]) -> None:
             event_type = evt.get("type")
             item = evt.get("item") or {}
             log_debug(
@@ -609,7 +610,7 @@ def run(
                 r"(?i)\\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\b"
             )
 
-            def _extract_session_id(value: Optional[str]) -> Optional[str]:
+            def _extract_session_id(value: str | None) -> str | None:
                 if not value:
                     return None
                 m = uuid_re.search(value)

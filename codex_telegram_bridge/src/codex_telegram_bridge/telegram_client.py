@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 class TelegramClient:
     """
@@ -16,7 +16,7 @@ class TelegramClient:
         self._base = f"https://api.telegram.org/bot{token}"
         self._timeout_s = timeout_s
 
-    def _call(self, method: str, params: Dict[str, Any]) -> Any:
+    def _call(self, method: str, params: dict[str, Any]) -> Any:
         url = f"{self._base}/{method}"
         data = json.dumps(params).encode("utf-8")
         req = urllib.request.Request(
@@ -40,11 +40,11 @@ class TelegramClient:
 
     def get_updates(
         self,
-        offset: Optional[int],
+        offset: int | None,
         timeout_s: int = 50,
-        allowed_updates: Optional[List[str]] = None,
-    ) -> List[Dict[str, Any]]:
-        params: Dict[str, Any] = {"timeout": timeout_s}
+        allowed_updates: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {"timeout": timeout_s}
         if offset is not None:
             params["offset"] = offset
         if allowed_updates is not None:
@@ -55,11 +55,11 @@ class TelegramClient:
         self,
         chat_id: int,
         text: str,
-        reply_to_message_id: Optional[int] = None,
-        disable_notification: Optional[bool] = False,
-        entities: Optional[List[Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
-        params: Dict[str, Any] = {
+        reply_to_message_id: int | None = None,
+        disable_notification: bool | None = False,
+        entities: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {
             "chat_id": chat_id,
             "text": text,
         }
@@ -76,9 +76,9 @@ class TelegramClient:
         chat_id: int,
         message_id: int,
         text: str,
-        entities: Optional[List[Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
-        params: Dict[str, Any] = {
+        entities: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {
             "chat_id": chat_id,
             "message_id": message_id,
             "text": text,
@@ -88,7 +88,7 @@ class TelegramClient:
         return self._call("editMessageText", params)
 
     def delete_message(self, chat_id: int, message_id: int) -> bool:
-        params: Dict[str, Any] = {
+        params: dict[str, Any] = {
             "chat_id": chat_id,
             "message_id": message_id,
         }
