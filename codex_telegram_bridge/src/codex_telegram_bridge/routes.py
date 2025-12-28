@@ -14,8 +14,8 @@ def _now_unix() -> int:
 
 @dataclass(frozen=True)
 class Route:
-    route_type: str  # "exec" | "mcp" | "tmux"
-    route_id: str    # session_id / conversationId / tmux target
+    route_type: str  # "exec"
+    route_id: str    # session_id
     meta: Dict[str, Any]
 
 
@@ -83,6 +83,3 @@ class RouteStore:
         except json.JSONDecodeError:
             meta = {}
         return Route(route_type=route_type, route_id=route_id, meta=meta)
-
-    def close(self) -> None:
-        self._conn.close()

@@ -1,12 +1,10 @@
 # Telegram Codex Bridge (Codex)
 
-Route Telegram replies back into Codex sessions. Includes three options:
+Route Telegram replies back into Codex sessions using non-interactive
+`codex exec` + `codex exec resume`.
 
-1. Non-interactive `codex exec` + `codex exec resume`.
-2. `codex mcp-server` with MCP stdio JSON-RPC.
-3. tmux injection for interactive Codex sessions.
-
-All options store a mapping from `(chat_id, bot_message_id)` to a route so replies can be routed correctly.
+The bridge stores a mapping from `(chat_id, bot_message_id)` to a route so
+replies can be routed correctly.
 
 ## Install
 
@@ -23,11 +21,10 @@ chat_id = 123456789
 
 `chat_id` is used both for allowed messages and startup notifications.
 
-Optional keys (by mode):
+Optional keys:
 
 - common: `bridge_db`, `allowed_chat_ids`, `startup_chat_ids`
 - exec/resume: `startup_message`, `codex_cmd`, `codex_workspace`, `codex_exec_args`, `max_workers`, `codex_io_mode`, `codex_command_timeout_s`, `codex_no_child_timeout_s`
-- MCP server: `codex_mcp_cmd`, `codex_workspace`, `codex_sandbox`, `codex_approval_policy`
 
 ## Option 1: exec/resume
 
@@ -49,38 +46,6 @@ Optional flags:
 - `--workdir PATH` (override `codex_workspace`)
 - `--model NAME` (pass through to `codex exec`)
 
-## Option 2: MCP server
-
-Run:
-
-```bash
-uv run mcp-bridge
-```
-
-Optional flags:
-
-- `--ignore-backlog/--process-backlog` (default ignore pending updates)
-
-## Option 3: tmux
-
-Reply injector:
-
-```bash
-uv run tmux-reply
-```
-
-Optional flags:
-
-- `--ignore-backlog/--process-backlog` (default ignore pending updates)
-
-Notifier (call from your existing hook):
-
-```bash
-uv run tmux-notify --tmux-target "codex1:0.0" --text "$TURN_TEXT"
-```
-
-Add `--chat-id` if `chat_id` is not set in `~/.codex/telegram.toml`.
-
 ## Files
 - `src/codex_telegram_bridge/constants.py`: limits and config path constants
 - `src/codex_telegram_bridge/config.py`: config loading and chat-id parsing helpers
@@ -89,6 +54,3 @@ Add `--chat-id` if `chat_id` is not set in `~/.codex/telegram.toml`.
 - `src/codex_telegram_bridge/routes.py`: sqlite routing store
 - `src/codex_telegram_bridge/telegram_client.py`: Telegram Bot API client
 - `src/codex_telegram_bridge/exec_bridge.py`: codex exec + resume bridge
-- `src/codex_telegram_bridge/mcp_bridge.py`: MCP stdio JSON-RPC bridge
-- `src/codex_telegram_bridge/tmux_notify.py`: tmux notifier helper
-- `src/codex_telegram_bridge/tmux_reply_bot.py`: tmux reply injector
