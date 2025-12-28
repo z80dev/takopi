@@ -88,10 +88,9 @@ def extract_numeric_id(item_id: Optional[object], fallback: Optional[int] = None
     return fallback
 
 
-def with_id(item_id: Optional[int], line: str) -> str:
-    if item_id is not None:
-        return f"[{item_id}] {line}"
-    return f"[?] {line}"
+def with_id(item_id: Optional[int], *parts: str) -> str:
+    prefix = f"[{item_id}] " if item_id is not None else "[?] "
+    return prefix + "".join(parts)
 
 
 def format_item_action_line(etype: str, item_id: Optional[int], item: dict[str, Any]) -> str | None:
@@ -99,19 +98,19 @@ def format_item_action_line(etype: str, item_id: Optional[int], item: dict[str, 
     if itype == "command_execution":
         command = format_command(item["command"])
         if etype == "item.started":
-            return with_id(item_id, f"{STATUS_RUNNING} running: {command}")
+            return with_id(item_id, STATUS_RUNNING, " running: ", command)
         if etype == "item.completed":
             exit_code = item["exit_code"]
             exit_part = f" (exit {exit_code})" if exit_code is not None else ""
-            return with_id(item_id, f"{STATUS_DONE} ran: {command}{exit_part}")
+            return with_id(item_id, STATUS_DONE, " ran: ", command, exit_part)
         return None
 
     if itype == "mcp_tool_call":
         name = format_tool_call(item["server"], item["tool"])
         if etype == "item.started":
-            return with_id(item_id, f"{STATUS_RUNNING} tool: {name}")
+            return with_id(item_id, STATUS_RUNNING, " tool: ", name)
         if etype == "item.completed":
-            return with_id(item_id, f"{STATUS_DONE} tool: {name}")
+            return with_id(item_id, STATUS_DONE, " tool: ", name)
         return None
 
     return None
@@ -121,12 +120,12 @@ def format_item_completed_line(item_id: Optional[int], item: dict[str, Any]) -> 
     itype = item["type"]
     if itype == "web_search":
         query = format_query(item["query"])
-        return with_id(item_id, f"{STATUS_DONE} searched: {query}")
+        return with_id(item_id, STATUS_DONE, " searched: ", query)
     if itype == "file_change":
-        return with_id(item_id, f"{STATUS_DONE} {format_file_change(item['changes'])}")
+        return with_id(item_id, STATUS_DONE, " ", format_file_change(item["changes"]))
     if itype == "error":
         warning = truncate(item["message"], 120)
-        return with_id(item_id, f"{STATUS_DONE} warning: {warning}")
+        return with_id(item_id, STATUS_DONE, " warning: ", warning)
     return None
 
 
