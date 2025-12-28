@@ -149,7 +149,7 @@ class CodexExecRunner:
         prompt: str,
         session_id: Optional[str],
         on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
-    ) -> Tuple[str, str]:
+    ) -> Tuple[str, str, bool]:
         """
         Returns (session_id, final_agent_message_text)
         """
@@ -192,6 +192,7 @@ class CodexExecRunner:
 
         found_session: Optional[str] = session_id
         last_agent_text: Optional[str] = None
+        saw_agent_message = False
 
         cli_state = ExecRenderState()
 
@@ -219,6 +220,7 @@ class CodexExecRunner:
                 item = evt.get("item") or {}
                 if item.get("type") == "agent_message" and isinstance(item.get("text"), str):
                     last_agent_text = item["text"]
+                    saw_agent_message = True
 
         rc = proc.wait()
         t.join(timeout=2.0)
@@ -231,14 +233,14 @@ class CodexExecRunner:
             raise RuntimeError("codex exec finished but no session_id/thread_id was captured")
 
         log(f"[codex] done run session_id={found_session!r}")
-        return found_session, (last_agent_text or "(No agent_message captured from JSON stream.)")
+        return found_session, (last_agent_text or "(No agent_message captured from JSON stream.)"), saw_agent_message
 
     def run_serialized(
         self,
         prompt: str,
         session_id: Optional[str],
         on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
-    ) -> Tuple[str, str]:
+    ) -> Tuple[str, str, bool]:
         """
         If resuming, serialize per-session.
         """
@@ -412,7 +414,11 @@ def run(
                 progress.stop()
 
         try:
-            session_id, answer = runner.run_serialized(text, resume_session, on_event=on_event)
+            session_id, answer, saw_agent_message = runner.run_serialized(
+                text,
+                resume_session,
+                on_event=on_event,
+            )
         except Exception as e:
             _stop_background()
             err = _clamp_tg_text(f"Error:\n{e}")
@@ -447,7 +453,7 @@ def run(
 
         answer = answer or "(No agent_message captured from JSON stream.)"
         elapsed = time.monotonic() - started_at
-        status = "error" if answer == "(No agent_message captured from JSON stream.)" else "done"
+        status = "done" if saw_agent_message else "error"
         final_md = progress_renderer.render_final(elapsed, answer, status=status)
         final_text, final_entities = render_markdown(final_md)
         can_edit_final = progress_id is not None and len(final_text) <= TELEGRAM_TEXT_LIMIT
