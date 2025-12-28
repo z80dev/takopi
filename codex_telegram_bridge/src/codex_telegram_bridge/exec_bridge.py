@@ -13,6 +13,8 @@ import subprocess
 import threading
 import time
 import logging
+import sys
+from logging.handlers import RotatingFileHandler
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from collections.abc import Callable
@@ -27,34 +29,31 @@ from .telegram_client import TelegramClient
 
 # -------------------- Codex runner --------------------
 
+logger = logging.getLogger("exec_bridge")
 
-def log(msg: str) -> None:
-    ts = time.strftime("%Y-%m-%d %H:%M:%S")
-    line = f"[{ts}] {msg}"
-    print(line, flush=True)
-    log_debug(line)
-
-
-_file_logger: logging.Logger | None = None
-
-
-def setup_file_logger(path: str | None) -> None:
-    global _file_logger
-    if not path:
-        return
-    logger = logging.getLogger("exec_bridge")
+def setup_logging(log_file: str | None) -> None:
     logger.setLevel(logging.DEBUG)
-    handler = logging.FileHandler(path, encoding="utf-8")
-    handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
-    logger.addHandler(handler)
-    _file_logger = logger
-    log_debug(f"[debug] file logger initialized path={path!r}")
+    logger.handlers.clear()
+    logger.propagate = False
 
+    fmt = logging.Formatter("%(asctime)s %(message)s")
 
-def log_debug(msg: str) -> None:
-    if _file_logger is None:
-        return
-    _file_logger.debug(msg)
+    console = logging.StreamHandler(sys.stdout)
+    console.setLevel(logging.INFO)
+    console.setFormatter(fmt)
+    logger.addHandler(console)
+
+    if log_file:
+        file_handler = RotatingFileHandler(
+            log_file,
+            maxBytes=5 * 1024 * 1024,
+            backupCount=3,
+            encoding="utf-8",
+        )
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(fmt)
+        logger.addHandler(file_handler)
+        logger.debug("[debug] file logger initialized path=%r", log_file)
 
 
 def _one_line(text: str | None) -> str:
@@ -130,7 +129,7 @@ class ProgressEditor:
         text = _clamp_tg_text(text)
         with self._lock:
             self._pending = (text, entities)
-        log_debug(f"[progress] set pending len={len(text)} entities={bool(entities)}")
+        logger.debug("[progress] set pending len=%s entities=%s", len(text), bool(entities))
 
     def set_markdown(self, text: str) -> None:
         rendered_text, entities = render_markdown(text)
@@ -148,16 +147,18 @@ class ProgressEditor:
                 text=text,
                 entities=entities,
             )
-            log_debug(
-                f"[progress] edit ok chat_id={self.chat_id} message_id={self.message_id} len={len(text)}"
+            logger.debug(
+                "[progress] edit ok chat_id=%s message_id=%s len=%s",
+                self.chat_id,
+                self.message_id,
+                len(text),
             )
         except Exception as e:
-            log(
-                "[progress] edit failed "
-                f"chat_id={self.chat_id} message_id={self.message_id}: {e}"
-            )
-            log_debug(
-                f"[progress] edit failed chat_id={self.chat_id} message_id={self.message_id}: {e}"
+            logger.info(
+                "[progress] edit failed chat_id=%s message_id=%s: %s",
+                self.chat_id,
+                self.message_id,
+                e,
             )
 
     def _run(self) -> None:
@@ -209,7 +210,7 @@ class CodexExecRunner:
         """
         Returns (session_id, final_agent_message_text)
         """
-        log(f"[codex] start run session_id={session_id!r} workspace={self.workspace!r}")
+        logger.info("[codex] start run session_id=%r workspace=%r", session_id, self.workspace)
         args = [self.codex_cmd, "exec", "--json"]
         args.extend(self.extra_args)
         if self.workspace:
@@ -230,7 +231,7 @@ class CodexExecRunner:
             text=True,
             bufsize=1,
         )
-        log_debug(f"[codex] spawn pid={proc.pid} args={args!r}")
+        logger.debug("[codex] spawn pid=%s args=%r", proc.pid, args)
         assert proc.stdin and proc.stdout and proc.stderr
 
         # send prompt then close stdin
@@ -241,7 +242,7 @@ class CodexExecRunner:
 
         def _drain_stderr() -> None:
             for line in proc.stderr:
-                log(f"[codex][stderr] {line.rstrip()}")
+                logger.info("[codex][stderr] %s", line.rstrip())
                 stderr_lines.append(line)
 
         t = threading.Thread(target=_drain_stderr, daemon=True)
@@ -263,12 +264,12 @@ class CodexExecRunner:
                 continue
             cli_last_turn, out_lines = render_event_cli(evt, cli_last_turn)
             for out in out_lines:
-                log(f"[codex] {out}")
+                logger.info("[codex] %s", out)
             if on_event is not None:
                 try:
                     on_event(evt)
                 except Exception as e:
-                    log(f"[codex][on_event] callback error: {e}")
+                    logger.info("[codex][on_event] callback error: %s", e)
 
             # From Codex JSONL event stream
             if evt.get("type") == "thread.started":
@@ -281,7 +282,7 @@ class CodexExecRunner:
                     saw_agent_message = True
 
         rc = proc.wait()
-        log_debug(f"[codex] process exit pid={proc.pid} rc={rc}")
+        logger.debug("[codex] process exit pid=%s rc=%s", proc.pid, rc)
         t.join(timeout=2.0)
 
         if rc != 0:
@@ -291,7 +292,7 @@ class CodexExecRunner:
         if not found_session:
             raise RuntimeError("codex exec finished but no session_id/thread_id was captured")
 
-        log(f"[codex] done run session_id={found_session!r}")
+        logger.info("[codex] done run session_id=%r", found_session)
         return found_session, (last_agent_text or "(No agent_message captured from JSON stream.)"), saw_agent_message
 
     def run_serialized(
@@ -351,7 +352,7 @@ def run(
         help="Codex model to pass to `codex exec`.",
     ),
 ) -> None:
-    setup_file_logger(log_file if log_file else None)
+    setup_logging(log_file if log_file else None)
     config = load_telegram_config()
     token = config["bot_token"]
 
@@ -410,32 +411,35 @@ def run(
         try:
             updates = bot.get_updates(offset=offset, timeout_s=0, allowed_updates=["message"])
         except Exception as e:
-            log(f"[startup] backlog drain failed: {e}")
+            logger.info("[startup] backlog drain failed: %s", e)
             updates = []
         if updates:
             offset = updates[-1]["update_id"] + 1
-            log(f"[startup] drained {len(updates)} pending update(s)")
+            logger.info("[startup] drained %s pending update(s)", len(updates))
 
-    log(f"[startup] pwd={startup_pwd}")
-    log("Option1 bridge running (codex exec). Long-polling Telegram...")
+    logger.info("[startup] pwd=%s", startup_pwd)
+    logger.info("Option1 bridge running (codex exec). Long-polling Telegram...")
     if startup_ids:
         for chat_id in startup_ids:
             try:
                 bot.send_message(chat_id=chat_id, text=startup_msg)
-                log(f"[startup] sent startup message to chat_id={chat_id}")
+                logger.info("[startup] sent startup message to chat_id=%s", chat_id)
             except Exception as e:
-                log(f"[startup] failed to send startup message to chat_id={chat_id}: {e}")
+                logger.info("[startup] failed to send startup message to chat_id=%s: %s", chat_id, e)
     else:
-        log("[startup] no chat_id configured; skipping startup message")
+        logger.info("[startup] no chat_id configured; skipping startup message")
 
     def handle(chat_id: int, user_msg_id: int, text: str, resume_session: str | None) -> None:
-        log(
-            "[handle] start "
-            f"chat_id={chat_id} user_msg_id={user_msg_id} resume_session={resume_session!r}"
+        logger.info(
+            "[handle] start chat_id=%s user_msg_id=%s resume_session=%r",
+            chat_id,
+            user_msg_id,
+            resume_session,
         )
-        log_debug(
-            "[handle] thread "
-            f"name={threading.current_thread().name} ident={threading.get_ident()}"
+        logger.debug(
+            "[handle] thread name=%s ident=%s",
+            threading.current_thread().name,
+            threading.get_ident(),
         )
         edit_every_s = progress_edit_every_s
         silent_progress = progress_silent
@@ -458,10 +462,9 @@ def run(
                 disable_notification=silent_progress,
             )
             progress_id = int(progress_msg["message_id"])
-            log_debug(f"[progress] sent chat_id={chat_id} message_id={progress_id}")
+            logger.debug("[progress] sent chat_id=%s message_id=%s", chat_id, progress_id)
         except Exception as e:
-            log(f"[handle] failed to send progress message chat_id={chat_id}: {e}")
-            log_debug(f"[handle] failed to send progress message chat_id={chat_id}: {e}")
+            logger.info("[handle] failed to send progress message chat_id=%s: %s", chat_id, e)
 
         if progress_id is not None:
             progress = ProgressEditor(
@@ -476,9 +479,12 @@ def run(
         def on_event(evt: dict[str, Any]) -> None:
             event_type = evt.get("type")
             item = evt.get("item") or {}
-            log_debug(
-                "[codex] event "
-                f"type={event_type} item_id={item.get('id')} item_type={item.get('type')} status={item.get('status')}"
+            logger.debug(
+                "[codex] event type=%s item_id=%s item_type=%s status=%s",
+                event_type,
+                item.get("id"),
+                item.get("type"),
+                item.get("status"),
             )
             if event_type == "thread.started":
                 thread_id = evt.get("thread_id")
@@ -492,7 +498,7 @@ def run(
         def _stop_background() -> None:
             if progress is not None:
                 progress.stop()
-                log_debug("[progress] thread stopped")
+                logger.debug("[progress] thread stopped")
 
         try:
             session_id, answer, saw_agent_message = runner.run_serialized(
@@ -506,21 +512,25 @@ def run(
             if progress_id is not None and len(err) <= TELEGRAM_TEXT_LIMIT:
                 try:
                     bot.edit_message_text(chat_id=chat_id, message_id=progress_id, text=err)
-                    log(
-                        "[handle] error "
-                        f"chat_id={chat_id} user_msg_id={user_msg_id} "
-                        f"resume_session={resume_session!r} err={e}"
+                    logger.info(
+                        "[handle] error chat_id=%s user_msg_id=%s resume_session=%r err=%s",
+                        chat_id,
+                        user_msg_id,
+                        resume_session,
+                        e,
                     )
                     return
                 except Exception as ee:
-                    log(f"[handle] failed to edit progress into error: {ee}")
+                    logger.info("[handle] failed to edit progress into error: %s", ee)
 
             _send_markdown(bot, chat_id=chat_id, text=err, reply_to_message_id=user_msg_id)
-            log(
-                "[handle] error "
-                f"chat_id={chat_id} user_msg_id={user_msg_id} resume_session={resume_session!r} err={e}"
+            logger.info(
+                "[handle] error chat_id=%s user_msg_id=%s resume_session=%r err=%s",
+                chat_id,
+                user_msg_id,
+                resume_session,
+                e,
             )
-            log_debug(f"[handle] error chat_id={chat_id} user_msg_id={user_msg_id}: {e}")
             return
 
         _stop_background()
@@ -539,9 +549,11 @@ def run(
                 try:
                     bot.delete_message(chat_id=chat_id, message_id=progress_id)
                 except Exception as e:
-                    log(f"[handle] delete progress failed chat_id={chat_id} message_id={progress_id}: {e}")
-                    log_debug(
-                        f"[handle] delete progress failed chat_id={chat_id} message_id={progress_id}: {e}"
+                    logger.info(
+                        "[handle] delete progress failed chat_id=%s message_id=%s: %s",
+                        chat_id,
+                        progress_id,
+                        e,
                     )
         else:
             bot.edit_message_text(
@@ -551,17 +563,18 @@ def run(
                 entities=final_entities or None,
             )
 
-        log(
-            "[handle] done "
-            f"chat_id={chat_id} user_msg_id={user_msg_id} session_id={session_id!r}"
+        logger.info(
+            "[handle] done chat_id=%s user_msg_id=%s session_id=%r",
+            chat_id,
+            user_msg_id,
+            session_id,
         )
-        log_debug(f"[handle] done chat_id={chat_id} user_msg_id={user_msg_id} session_id={session_id!r}")
 
     while True:
         try:
             updates = bot.get_updates(offset=offset, timeout_s=50, allowed_updates=["message"])
         except Exception as e:
-            log(f"[telegram] get_updates error: {e}")
+            logger.info("[telegram] get_updates error: %s", e)
             time.sleep(2.0)
             continue
 
@@ -572,38 +585,42 @@ def run(
             from_bot = msg.get("from", {}).get("is_bot")
             msg_text = msg.get("text")
             reply_to = (msg.get("reply_to_message") or {}).get("message_id")
-            log(
-                "[telegram] received "
-                f"update_id={upd.get('update_id')} chat_id={chat_id} "
-                f"from_bot={from_bot} has_text={msg_text is not None} "
-                f"reply_to={reply_to} text={_one_line(msg_text)}"
+            logger.info(
+                "[telegram] received update_id=%s chat_id=%s from_bot=%s has_text=%s reply_to=%s text=%s",
+                upd.get("update_id"),
+                chat_id,
+                from_bot,
+                msg_text is not None,
+                reply_to,
+                _one_line(msg_text),
             )
             if "text" not in msg:
-                log(
-                    "[telegram] ignoring non-text message "
-                    f"chat_id={chat_id} update_id={upd.get('update_id')}"
+                logger.info(
+                    "[telegram] ignoring non-text message chat_id=%s update_id=%s",
+                    chat_id,
+                    upd.get("update_id"),
                 )
                 continue
 
             if allowed is not None and int(chat_id) not in allowed:
-                log(
-                    "[telegram] rejected by ACL "
-                    f"chat_id={chat_id} allowed={sorted(allowed)}"
-                )
+                logger.info("[telegram] rejected by ACL chat_id=%s allowed=%s", chat_id, sorted(allowed))
                 continue
 
             if msg.get("from", {}).get("is_bot"):
-                log(
-                    "[telegram] ignoring bot message "
-                    f"chat_id={chat_id} update_id={upd.get('update_id')}"
+                logger.info(
+                    "[telegram] ignoring bot message chat_id=%s update_id=%s",
+                    chat_id,
+                    upd.get("update_id"),
                 )
                 continue
 
             text = msg["text"]
             user_msg_id = msg["message_id"]
-            log(
-                "[telegram] accepted message "
-                f"chat_id={chat_id} user_msg_id={user_msg_id} text={_one_line(text)}"
+            logger.info(
+                "[telegram] accepted message chat_id=%s user_msg_id=%s text=%s",
+                chat_id,
+                user_msg_id,
+                _one_line(text),
             )
 
             uuid_re = re.compile(
