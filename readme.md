@@ -46,6 +46,23 @@ chat_id = 123456789
 
 The bridge only accepts messages where the chat ID equals the sender ID and both match `chat_id` (i.e., private chat with that user).
 
+When you pass `--cd`, Takopi looks for `codex/takopi.toml` under that directory first.
+
+### Codex Profile (Optional)
+
+Create a Codex profile in `~/.codex/config.toml`:
+
+```toml
+[profiles.takopi]
+model = "gpt-4.1"
+```
+
+Then run Takopi with:
+
+```bash
+uv run takopi --profile takopi
+```
+
 ### Running
 
 ```bash
@@ -59,7 +76,7 @@ uv run takopi
 | `--final-notify` / `--no-final-notify` | `--final-notify` | Send final response as new message (vs. edit) |
 | `--debug` / `--no-debug` | `--no-debug` | Enable verbose logging |
 | `--cd PATH` | cwd | Working directory for Codex |
-| `--model NAME` | (codex default) | Model to use |
+| `--profile NAME` | (codex default) | Codex profile name |
 
 ## Usage
 

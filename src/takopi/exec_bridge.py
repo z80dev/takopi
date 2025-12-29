@@ -6,7 +6,6 @@ import json
 import logging
 import os
 import re
-import shlex
 import shutil
 import time
 from collections import deque
@@ -224,10 +223,11 @@ class CodexExecRunner:
             "[codex] start run session_id=%r workspace=%r", session_id, self.workspace
         )
         logger.debug("[codex] prompt: %s", prompt)
-        args = [self.codex_cmd, "exec", "--json"]
+        args = [self.codex_cmd]
         args.extend(self.extra_args)
         if self.workspace:
             args.extend(["--cd", self.workspace])
+        args.extend(["exec", "--json"])
 
         # Always pipe prompt via stdin ("-") to avoid quoting issues.
         if session_id:
@@ -356,9 +356,18 @@ def _parse_bridge_config(
     *,
     final_notify: bool,
     cd: str | None,
-    model: str | None,
+    profile: str | None,
 ) -> BridgeConfig:
-    config, config_path = load_telegram_config()
+    startup_pwd = os.getcwd()
+    workspace = None
+    if cd is not None:
+        expanded_cd = os.path.expanduser(cd)
+        if not os.path.isdir(expanded_cd):
+            raise ConfigError(f"--cd must be an existing directory: {expanded_cd}")
+        workspace = expanded_cd
+        startup_pwd = expanded_cd
+
+    config, config_path = load_telegram_config(base_dir=workspace)
     try:
         token = config["bot_token"]
     except KeyError:
@@ -381,39 +390,10 @@ def _parse_bridge_config(
             "  brew install codex"
         )
 
-    startup_pwd = os.getcwd()
-    workspace = None
-    if cd is not None:
-        expanded_cd = os.path.expanduser(cd)
-        if not os.path.isdir(expanded_cd):
-            raise ConfigError(f"--cd must be an existing directory: {expanded_cd}")
-        workspace = expanded_cd
-        startup_pwd = expanded_cd
-
     startup_msg = f"codex exec bridge has started\npwd: {startup_pwd}"
-    raw_exec_args = config.get("codex_exec_args", "")
-    if isinstance(raw_exec_args, list):
-        extra_args = [str(v) for v in raw_exec_args]
-    else:
-        extra_args = shlex.split(str(raw_exec_args))  # e.g. "--full-auto --search"
-
-    if model:
-        extra_args.extend(["--model", model])
-
-    def _has_notify_override(args: list[str]) -> bool:
-        for i, arg in enumerate(args):
-            if arg in ("-c", "--config"):
-                key = args[i + 1].split("=", 1)[0].strip()
-                if key == "notify" or key.endswith(".notify"):
-                    return True
-            elif arg.startswith(("--config=", "-c=")):
-                key = arg.split("=", 1)[1].split("=", 1)[0].strip()
-                if key == "notify" or key.endswith(".notify"):
-                    return True
-        return False
-
-    if not _has_notify_override(extra_args):
-        extra_args.extend(["-c", "notify=[]"])
+    extra_args = ["-c", "notify=[]"]
+    if profile:
+        extra_args.extend(["--profile", profile])
 
     bot = TelegramClient(token)
     runner = CodexExecRunner(codex_cmd=codex_cmd, workspace=workspace, extra_args=extra_args)
@@ -716,10 +696,10 @@ def run(
         "--cd",
         help="Pass through to `codex --cd`.",
     ),
-    model: str | None = typer.Option(
+    profile: str | None = typer.Option(
         None,
-        "--model",
-        help="Codex model to pass to `codex exec`.",
+        "--profile",
+        help="Codex profile name to pass to `codex --profile`.",
     ),
 ) -> None:
     setup_logging(debug=debug)
@@ -727,7 +707,7 @@ def run(
         cfg = _parse_bridge_config(
             final_notify=final_notify,
             cd=cd,
-            model=model,
+            profile=profile,
         )
     except ConfigError as e:
         typer.echo(str(e), err=True)
