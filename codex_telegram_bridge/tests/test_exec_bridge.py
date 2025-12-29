@@ -96,8 +96,6 @@ def test_final_notify_sends_loud_final_message() -> None:
         bot=bot,  # type: ignore[arg-type]
         runner=runner,  # type: ignore[arg-type]
         chat_id=123,
-        ignore_backlog=True,
-        progress_edit_every_s=999.0,
         final_notify=True,
         startup_msg="",
         max_concurrency=1,
@@ -128,8 +126,6 @@ def test_new_final_message_forces_notification_when_too_long_to_edit() -> None:
         bot=bot,  # type: ignore[arg-type]
         runner=runner,  # type: ignore[arg-type]
         chat_id=123,
-        ignore_backlog=True,
-        progress_edit_every_s=999.0,
         final_notify=False,
         startup_msg="",
         max_concurrency=1,

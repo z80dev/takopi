@@ -35,13 +35,14 @@ uv run exec-bridge
 
 Optional flags:
 
-- `--progress-edit-every FLOAT` (default `2.0`)
 - `--final-notify/--no-final-notify` (default notify via new message)
-- `--ignore-backlog/--process-backlog` (default ignore pending updates)
+- `--debug/--no-debug` (default no debug logging; use `--debug | tee debug.log` to capture)
 - `--cd PATH` (pass through to `codex --cd`)
 - `--model NAME` (pass through to `codex exec`)
 
 Progress updates are always sent silently.
+Pending updates are always ignored on startup.
+Progress updates are throttled to roughly every 2 seconds.
 
 To resume an existing thread without a database, reply with (or include) the session id shown at the end of the bot response:
 

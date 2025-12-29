@@ -308,8 +308,6 @@ class BridgeConfig:
     bot: TelegramClient
     runner: CodexExecRunner
     chat_id: int
-    ignore_backlog: bool
-    progress_edit_every_s: float
     final_notify: bool
     startup_msg: str
     max_concurrency: int
@@ -317,9 +315,7 @@ class BridgeConfig:
 
 def _parse_bridge_config(
     *,
-    progress_edit_every_s: float,
     final_notify: bool,
-    ignore_backlog: bool,
     cd: str | None,
     model: str | None,
 ) -> BridgeConfig:
@@ -366,8 +362,6 @@ def _parse_bridge_config(
         bot=bot,
         runner=runner,
         chat_id=chat_id,
-        ignore_backlog=bool(ignore_backlog),
-        progress_edit_every_s=progress_edit_every_s,
         final_notify=final_notify,
         startup_msg=startup_msg,
         max_concurrency=16,
@@ -386,8 +380,6 @@ async def _send_startup(cfg: BridgeConfig) -> None:
 
 
 async def _drain_backlog(cfg: BridgeConfig, offset: int | None) -> int | None:
-    if not cfg.ignore_backlog:
-        return offset
     try:
         updates = await cfg.bot.get_updates(
             offset=offset, timeout_s=0, allowed_updates=["message"]
@@ -486,7 +478,7 @@ async def _handle_message(
         if not progress_renderer.note_event(evt):
             return
         now = time.monotonic()
-        if (now - last_edit_at) < cfg.progress_edit_every_s:
+        if (now - last_edit_at) < 2.0:
             return
         if edit_task is not None and not edit_task.done():
             return
@@ -646,31 +638,15 @@ async def _run_main_loop(cfg: BridgeConfig) -> None:
 
 
 def run(
-    progress_edit_every_s: float = typer.Option(
-        2.0,
-        "--progress-edit-every",
-        help="Minimum seconds between progress message edits.",
-        min=1.0,
-    ),
     final_notify: bool = typer.Option(
         True,
         "--final-notify/--no-final-notify",
         help="Send the final response as a new message (not an edit).",
     ),
-    ignore_backlog: bool = typer.Option(
-        True,
-        "--ignore-backlog/--process-backlog",
-        help="Skip pending Telegram updates that arrived before startup.",
-    ),
     debug: bool = typer.Option(
         False,
         "--debug/--no-debug",
         help="Log codex JSONL, Telegram requests, and rendered messages.",
-    ),
-    log_file: str | None = typer.Option(
-        None,
-        "--log-file",
-        help="Write detailed logs to this file.",
     ),
     cd: str | None = typer.Option(
         None,
@@ -683,11 +659,9 @@ def run(
         help="Codex model to pass to `codex exec`.",
     ),
 ) -> None:
-    setup_logging(log_file if log_file else None, debug=debug)
+    setup_logging(debug=debug)
     cfg = _parse_bridge_config(
-        progress_edit_every_s=progress_edit_every_s,
         final_notify=final_notify,
-        ignore_backlog=ignore_backlog,
         cd=cd,
         model=model,
     )
