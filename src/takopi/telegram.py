@@ -24,10 +24,6 @@ class TelegramAPIError(RuntimeError):
 
 
 class TelegramClient:
-    """
-    Minimal Telegram Bot API client.
-    """
-
     def __init__(
         self,
         token: str,

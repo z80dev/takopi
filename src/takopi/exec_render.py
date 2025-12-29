@@ -91,11 +91,6 @@ def format_event(
     command_width: int | None = None,
     escape_markdown: bool = False,
 ) -> tuple[int | None, list[str], str | None, str | None]:
-    """
-    Returns (new_last_item, cli_lines, progress_line, progress_prefix).
-    progress_prefix is only set when progress_line is set, and is used for
-    replacing a preceding "running" line on completion.
-    """
     lines: list[str] = []
 
     match event["type"]:

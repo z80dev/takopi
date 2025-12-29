@@ -1,5 +1,3 @@
-"""First-run setup validation and onboarding."""
-
 from __future__ import annotations
 
 import shutil
@@ -16,8 +14,6 @@ _OCTOPUS = "\N{OCTOPUS}"
 
 @dataclass(slots=True)
 class SetupResult:
-    """Collected setup issues."""
-
     missing_codex: bool = False
     missing_or_invalid_config: bool = False
     config_path: Path = HOME_CONFIG_PATH
@@ -28,7 +24,6 @@ class SetupResult:
 
 
 def check_setup() -> SetupResult:
-    """Check all prerequisites and return collected issues."""
     missing_codex = shutil.which("codex") is None
 
     try:
@@ -54,7 +49,6 @@ def check_setup() -> SetupResult:
 
 
 def _config_path_display(path: Path) -> str:
-    """Format path for display, using ~ for home directory."""
     home = Path.home()
     try:
         return f"~/{path.relative_to(home)}"
@@ -63,7 +57,6 @@ def _config_path_display(path: Path) -> str:
 
 
 def render_setup_guide(result: SetupResult) -> None:
-    """Render a friendly setup guide panel to stderr."""
     if result.ok:
         return
 

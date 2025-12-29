@@ -188,12 +188,6 @@ EventCallback = Callable[[dict[str, Any]], Awaitable[None] | None]
 
 
 class CodexExecRunner:
-    """
-    Runs Codex in non-interactive mode:
-      - new:    codex exec --json ... -
-      - resume: codex exec --json ... resume <SESSION_ID> -
-    """
-
     def __init__(
         self,
         codex_cmd: str,
@@ -330,9 +324,6 @@ class CodexExecRunner:
         session_id: str | None,
         on_event: EventCallback | None = None,
     ) -> tuple[str, str, bool]:
-        """
-        If resuming, serialize per-session.
-        """
         if not session_id:
             return await self.run(prompt, session_id=None, on_event=on_event)
         lock = await self._lock_for(session_id)
