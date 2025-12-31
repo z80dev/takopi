@@ -2,13 +2,13 @@
 
 🐙 *he just wants to help-pi*
 
-telegram bot for [codex](https://github.com/openai/codex). with streaming progress and resumeable sessions.
+telegram bot for [codex](https://github.com/openai/codex). runs `codex exec --json`, streams progress, and supports resumable sessions.
 
 ## features
 
 stateless resume via `codex resume <token>` lines in chat.
 
-edits progress message while codex runs (commands, tools, reasoning, edits, elapsed time).
+edits a single progress message while codex runs (commands, tools, notes, file changes, elapsed time).
 
 renders markdown to telegram entities.
 
@@ -22,18 +22,19 @@ runs in parallel across threads and queues per thread to keep codex history sane
 ## install
 
 - `uv tool install takopi` to install as `takopi`
-- or try it out with `uvx takopi`
+- or try it with `uvx takopi`
 
 ## setup
 
 1. get `bot_token` from [@BotFather](https://t.me/BotFather)
 2. get `chat_id` from [@myidbot](https://t.me/myidbot)
-2. send `/start` to the bot (telegram won't let it message you first)
-3. run `codex` once interactively in the repo to trust the directory
+3. send `/start` to the bot (telegram won't let it message you first)
+4. run `codex` once interactively in the repo to trust the directory
 
 ## config
 
-takopi config lives in `~/.takopi/takopi.toml` and can be overriden by `.takopi/takopi.toml` in the current repo.
+takopi reads `.takopi/takopi.toml` in the current repo, otherwise `~/.takopi/takopi.toml`.
+legacy `.codex/takopi.toml` is migrated automatically.
 
 ```toml
 bot_token = "123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
@@ -55,14 +56,23 @@ takopi
 
 send a message to the bot.
 
-to continue a thread, reply to a bot message.
+to continue a thread, reply to a bot message containing a resume line.
 
 to stop a run, reply to the progress message with `/cancel`.
 
 ## cli
 
-by default takopi sends the progress message silently, and replaces it with the final answer to notify you. this can be turned off with `--no-final-notify`
+default: progress is silent, final answer is sent as a new message (notification), progress message is deleted.
+
+`--no-final-notify` edits the progress message into the final answer (no new notification).
+
+`--debug` enables verbose logs.
+
+## notes
+
+* private chat only
+* run exactly one instance per bot token
 
 ## development
 
-see [`docs/specification.md`](docs/specification.md) and [`docs/developing.md`](`docs/developing.md`).
+see [`docs/specification.md`](docs/specification.md) and [`docs/developing.md`](docs/developing.md).
