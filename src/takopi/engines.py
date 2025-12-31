@@ -75,7 +75,10 @@ def _codex_build_runner(
 
     if overrides:
         unknown = ", ".join(sorted(overrides))
-        raise ConfigError(f"Unknown codex override(s): {unknown}")
+        raise ConfigError(
+            "Codex does not support --engine-option overrides yet. "
+            f"Remove: {unknown}"
+        )
 
     return CodexRunner(codex_cmd=codex_cmd, extra_args=extra_args, title=title)
 

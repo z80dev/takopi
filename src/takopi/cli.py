@@ -101,6 +101,7 @@ def run(
         "--engine-option",
         "-E",
         help="Engine-specific override in KEY=VALUE form (repeatable).",
+        hidden=True,
     ),
 ) -> None:
     setup_logging(debug=debug)
