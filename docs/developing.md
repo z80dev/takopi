@@ -40,7 +40,6 @@ The orchestrator module containing:
 | `handle_message()` | Per-message handler with progress updates and final render |
 | `ProgressEdits` | Throttled progress edit worker |
 | `_handle_cancel()` | `/cancel` routing |
-| `truncate_for_telegram()` | Moved to `markdown.py` |
 
 **Key patterns:**
 - Bridge schedules runs FIFO per thread to avoid concurrent progress messages; runner locks enforce per-thread serialization
@@ -63,6 +62,13 @@ The orchestrator module containing:
 | `render_markdown()` | Markdown → Telegram text + entities |
 | `prepare_telegram()` | Render + truncate for Telegram limits |
 | `truncate_for_telegram()` | Smart truncation preserving resume lines |
+
+### `telegram.py` - Telegram API wrapper
+
+| Component | Purpose |
+|-----------|---------|
+| `BotClient` | Protocol defining the bot client interface |
+| `TelegramClient` | HTTP client for Telegram Bot API (send, edit, delete messages) |
 
 ### `runners/codex.py` - Codex runner
 
@@ -87,7 +93,6 @@ Transforms takopi events into human-readable text:
 | `ExecProgressRenderer` | Stateful renderer tracking recent actions for progress display |
 | `render_event_cli()` | Format a takopi event for CLI logs |
 | `format_elapsed()` | Formats seconds as `Xh Ym`, `Xm Ys`, or `Xs` |
-| `render_markdown()` | Moved to `markdown.py` |
 
 **Supported event types:**
 - `started`
@@ -101,13 +106,16 @@ Transforms takopi events into human-readable text:
 | `model.py` | Domain types: resume tokens, actions, events, run result |
 | `runner.py` | Runner protocol + event queue utilities |
 
+### `engines.py` - Engine backend registry
+
+Registers available engines and provides setup checks + runner construction.
+
 ### `runners/` - Runner implementations
 
 | File | Purpose |
 |------|---------|
-| `engines.py` | Engine backend registry (setup checks + runner construction) |
-| `runners/codex.py` | Codex runner (JSONL → takopi events) + per-resume locks |
-| `runners/mock.py` | Mock runner for tests/demos |
+| `codex.py` | Codex runner (JSONL → takopi events) + per-resume locks |
+| `mock.py` | Mock runner for tests/demos |
 
 ### `config.py` - Configuration loading
 

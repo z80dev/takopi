@@ -113,7 +113,7 @@ Reply to a progress message with `/cancel` to stop the running execution.
 
 ## Development
 
-See [`developing.md`](developing.md) and `specification.md` for architecture and behavior details.
+See [`developing.md`](docs/developing.md) and [`specification.md`](docs/specification.md) for architecture and behavior details.
 
 ## License
 
