@@ -14,6 +14,7 @@ from .backends import EngineBackend
 from .bridge import BridgeConfig, run_main_loop
 from .config import ConfigError, load_telegram_config
 from .engines import get_backend, get_engine_config, list_backends
+from .lockfile import LockError, LockHandle, acquire_lock, token_fingerprint
 from .logging import setup_logging
 from .onboarding import check_setup, render_setup_guide
 from .router import AutoRouter, RunnerEntry
@@ -30,6 +31,46 @@ def _print_version_and_exit() -> None:
 def _version_callback(value: bool) -> None:
     if value:
         _print_version_and_exit()
+
+
+def load_and_validate_config(
+    path: str | Path | None = None,
+) -> tuple[dict, Path, str, int]:
+    config, config_path = load_telegram_config(path)
+    try:
+        token = config["bot_token"]
+    except KeyError:
+        raise ConfigError(f"Missing key `bot_token` in {config_path}.") from None
+    if not isinstance(token, str) or not token.strip():
+        raise ConfigError(
+            f"Invalid `bot_token` in {config_path}; expected a non-empty string."
+        ) from None
+    try:
+        chat_id_value = config["chat_id"]
+    except KeyError:
+        raise ConfigError(f"Missing key `chat_id` in {config_path}.") from None
+    if isinstance(chat_id_value, bool) or not isinstance(chat_id_value, int):
+        raise ConfigError(
+            f"Invalid `chat_id` in {config_path}; expected an integer."
+        ) from None
+    return config, config_path, token.strip(), chat_id_value
+
+
+def acquire_config_lock(config_path: Path, token: str) -> LockHandle:
+    try:
+        return acquire_lock(
+            config_path=config_path,
+            token_fingerprint=token_fingerprint(token),
+        )
+    except LockError as exc:
+        lines = str(exc).splitlines()
+        if lines:
+            typer.echo(lines[0], err=True)
+            if len(lines) > 1:
+                typer.echo("\n".join(lines[1:]), err=True)
+        else:
+            typer.echo("error: unknown error", err=True)
+        raise typer.Exit(code=1) from exc
 
 
 def _default_engine_for_setup(override: str | None) -> str:
@@ -139,27 +180,12 @@ def _parse_bridge_config(
     *,
     final_notify: bool,
     default_engine_override: str | None,
+    config: dict,
+    config_path: Path,
+    token: str,
+    chat_id: int,
 ) -> BridgeConfig:
     startup_pwd = os.getcwd()
-
-    config, config_path = load_telegram_config()
-    try:
-        token = config["bot_token"]
-    except KeyError:
-        raise ConfigError(f"Missing key `bot_token` in {config_path}.") from None
-    if not isinstance(token, str) or not token.strip():
-        raise ConfigError(
-            f"Invalid `bot_token` in {config_path}; expected a non-empty string."
-        ) from None
-    try:
-        chat_id_value = config["chat_id"]
-    except KeyError:
-        raise ConfigError(f"Missing key `chat_id` in {config_path}.") from None
-    if isinstance(chat_id_value, bool) or not isinstance(chat_id_value, int):
-        raise ConfigError(
-            f"Invalid `chat_id` in {config_path}; expected an integer."
-        ) from None
-    chat_id = chat_id_value
 
     backends = list_backends()
     default_engine = _resolve_default_engine(
@@ -201,25 +227,38 @@ def _run_auto_router(
     *, default_engine_override: str | None, final_notify: bool, debug: bool
 ) -> None:
     setup_logging(debug=debug)
+    lock_handle: LockHandle | None = None
     try:
         default_engine = _default_engine_for_setup(default_engine_override)
         backend = get_backend(default_engine)
     except ConfigError as e:
-        typer.echo(str(e), err=True)
+        typer.echo(f"error: {e}", err=True)
         raise typer.Exit(code=1)
     setup = check_setup(backend)
     if not setup.ok:
         render_setup_guide(setup)
         raise typer.Exit(code=1)
     try:
+        config, config_path, token, chat_id = load_and_validate_config()
+        lock_handle = acquire_config_lock(config_path, token)
         cfg = _parse_bridge_config(
             final_notify=final_notify,
             default_engine_override=default_engine_override,
+            config=config,
+            config_path=config_path,
+            token=token,
+            chat_id=chat_id,
         )
+        anyio.run(run_main_loop, cfg)
     except ConfigError as e:
-        typer.echo(str(e), err=True)
+        typer.echo(f"error: {e}", err=True)
         raise typer.Exit(code=1)
-    anyio.run(run_main_loop, cfg)
+    except KeyboardInterrupt:
+        logger.info("[shutdown] interrupted")
+        raise typer.Exit(code=130)
+    finally:
+        if lock_handle is not None:
+            lock_handle.release()
 
 
 app = typer.Typer(
