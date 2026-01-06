@@ -382,9 +382,31 @@ class ClaudeRunner(ResumeTokenMixin, JsonlSubprocessRunner):
 
     def env(self, *, state: Any) -> dict[str, str] | None:
         _ = state
+        env = dict(os.environ)
         if self.use_api_billing is not True:
-            env = dict(os.environ)
             env.pop("ANTHROPIC_API_KEY", None)
+
+        debug_env: dict[str, str | None] = {
+            "HOME": env.get("HOME"),
+            "USER": env.get("USER"),
+            "PATH": env.get("PATH"),
+            "XDG_CONFIG_HOME": env.get("XDG_CONFIG_HOME"),
+            "XDG_CACHE_HOME": env.get("XDG_CACHE_HOME"),
+            "XDG_DATA_HOME": env.get("XDG_DATA_HOME"),
+        }
+        claude_env = {
+            key: "<redacted>"
+            for key in env
+            if key.startswith("CLAUDE") or key.startswith("ANTHROPIC")
+        }
+        self.get_logger().debug(
+            "claude.env.debug",
+            env=debug_env,
+            claude_env=claude_env,
+            use_api_billing=self.use_api_billing,
+        )
+
+        if self.use_api_billing is not True:
             return env
         return None
 
