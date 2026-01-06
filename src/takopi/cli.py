@@ -11,6 +11,7 @@ import typer
 
 from . import __version__
 from .backends import EngineBackend
+from .commands import load_commands_from_dirs, parse_command_dirs
 from .config import ConfigError
 from .engines import get_backend, get_engine_config, list_backends
 from .lockfile import LockError, LockHandle, acquire_lock, token_fingerprint
@@ -207,6 +208,17 @@ def _parse_bridge_config(
         backends=backends,
         default_engine=default_engine,
     )
+
+    # Load slash commands from configured directories
+    command_dirs = parse_command_dirs(config)
+    commands = load_commands_from_dirs(command_dirs)
+    if commands.commands:
+        logger.info(
+            "commands.loaded",
+            count=len(commands.commands),
+            names=[c.name for c in commands.commands],
+        )
+
     available_engines = [entry.engine for entry in router.available_entries]
     missing_engines = [entry.engine for entry in router.entries if not entry.available]
     engine_list = ", ".join(available_engines) if available_engines else "none"
@@ -234,6 +246,7 @@ def _parse_bridge_config(
         chat_id=chat_id,
         startup_msg=startup_msg,
         exec_cfg=exec_cfg,
+        commands=commands,
     )
 
 
