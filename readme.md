@@ -53,6 +53,8 @@ default_engine = "codex"
 
 bot_token = "123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
 chat_id = 123456789
+# optional: import env vars from a shell command (use `env -0` for robust parsing)
+shell_env = ["zsh", "-c", "source ~/.zshrc; env -0"]
 
 [codex]
 # optional: profile from ~/.codex/config.toml

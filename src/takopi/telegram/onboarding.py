@@ -25,6 +25,7 @@ from ..backends_helpers import install_issue
 from ..config import ConfigError
 from ..engines import list_backends
 from ..logging import suppress_logs
+from ..utils.shell_env import apply_shell_env
 from .client import TelegramClient, TelegramRetryAfter
 from .config import HOME_CONFIG_PATH, load_telegram_config
 
@@ -84,17 +85,25 @@ def check_setup(backend: EngineBackend) -> SetupResult:
     issues: list[SetupIssue] = []
     config_path = HOME_CONFIG_PATH
     config: dict = {}
-    cmd = backend.cli_cmd or backend.id
     backend_issues: list[SetupIssue] = []
-    if shutil.which(cmd) is None:
-        backend_issues.append(install_issue(cmd, backend.install_cmd))
 
     try:
         config, config_path = load_telegram_config()
     except ConfigError:
+        cmd = backend.cli_cmd or backend.id
+        if shutil.which(cmd) is None:
+            backend_issues.append(install_issue(cmd, backend.install_cmd))
         issues.extend(backend_issues)
         issues.append(config_issue(config_path))
         return SetupResult(issues=issues, config_path=config_path)
+    try:
+        apply_shell_env(config, config_path)
+    except ConfigError as exc:
+        issues.append(SetupIssue(f"invalid config: {exc}", ()))
+        return SetupResult(issues=issues, config_path=config_path)
+    cmd = backend.cli_cmd or backend.id
+    if shutil.which(cmd) is None:
+        backend_issues.append(install_issue(cmd, backend.install_cmd))
 
     token = config.get("bot_token")
     chat_id = config.get("chat_id")

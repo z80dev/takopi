@@ -27,6 +27,7 @@ from .telegram.config import load_telegram_config
 from .telegram.onboarding import SetupResult, check_setup, interactive_setup
 from .router import AutoRouter, RunnerEntry
 from .runner_bridge import ExecBridgeConfig
+from .utils.shell_env import apply_shell_env
 
 logger = get_logger(__name__)
 
@@ -312,6 +313,7 @@ def _run_auto_router(
             raise typer.Exit(code=1)
     try:
         config, config_path, token, chat_id = load_and_validate_config()
+        apply_shell_env(config, config_path)
         lock_handle = acquire_config_lock(config_path, token)
         cfg = _parse_bridge_config(
             final_notify=final_notify,
