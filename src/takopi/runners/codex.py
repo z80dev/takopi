@@ -549,6 +549,13 @@ class CodexRunner(ResumeTokenMixin, JsonlSubprocessRunner):
 def build_runner(config: EngineConfig, config_path: Path) -> Runner:
     codex_cmd = "codex"
 
+    def _has_config_override(args: list[str], key: str) -> bool:
+        prefix = f"{key}="
+        for idx, arg in enumerate(args[:-1]):
+            if arg == "-c" and args[idx + 1].startswith(prefix):
+                return True
+        return False
+
     extra_args_value = config.get("extra_args")
     if extra_args_value is None:
         extra_args = ["-c", "notify=[]"]
@@ -570,6 +577,15 @@ def build_runner(config: EngineConfig, config_path: Path) -> Runner:
             )
         extra_args.extend(["--profile", profile_value])
         title = profile_value
+
+    if config.get("unrestricted") is True:
+        for key, value in (
+            ("sandbox_mode", "danger-full-access"),
+            ("approval_policy", "never"),
+            ("network_access", "enabled"),
+        ):
+            if not _has_config_override(extra_args, key):
+                extra_args.extend(["-c", f"{key}={value}"])
 
     return CodexRunner(codex_cmd=codex_cmd, extra_args=extra_args, title=title)
 

@@ -57,6 +57,8 @@ chat_id = 123456789
 [codex]
 # optional: profile from ~/.codex/config.toml
 profile = "takopi"
+# optional: disable sandbox + approvals (high risk)
+unrestricted = true
 
 [claude]
 model = "sonnet"
