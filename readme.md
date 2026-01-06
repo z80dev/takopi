@@ -62,6 +62,8 @@ unrestricted = true
 
 [claude]
 model = "sonnet"
+# optional: override the CLI command used to invoke claude
+command = "yolo"
 # optional: defaults to ["Bash", "Read", "Edit", "Write"]
 allowed_tools = ["Bash", "Read", "Edit", "Write", "WebSearch"]
 dangerously_skip_permissions = false

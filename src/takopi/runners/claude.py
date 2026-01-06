@@ -9,6 +9,7 @@ from typing import Any
 import msgspec
 
 from ..backends import EngineBackend, EngineConfig
+from ..config import ConfigError
 from ..events import EventFactory
 from ..logging import get_logger
 from ..model import Action, ActionKind, EngineId, ResumeToken, TakopiEvent
@@ -527,6 +528,14 @@ class ClaudeRunner(ResumeTokenMixin, JsonlSubprocessRunner):
 
 def build_runner(config: EngineConfig, _config_path: Path) -> Runner:
     claude_cmd = "claude"
+    command_value = config.get("command")
+    if command_value is not None:
+        if not isinstance(command_value, str):
+            raise ConfigError(
+                f"Invalid `claude.command` in {_config_path}; expected a string."
+            )
+        if command_value.strip():
+            claude_cmd = command_value.strip()
 
     model = config.get("model")
     if "allowed_tools" in config:
