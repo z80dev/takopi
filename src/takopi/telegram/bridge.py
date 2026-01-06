@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import anyio
 
+from ..commands import (
+    Command,
+    CommandCatalog,
+    build_command_prompt,
+    normalize_command,
+)
 from ..runner_bridge import (
     ExecBridgeConfig,
     IncomingMessage,
@@ -70,22 +76,78 @@ def _strip_engine_command(
     return "\n".join(lines).strip(), engine
 
 
-def _build_bot_commands(router: AutoRouter) -> list[dict[str, str]]:
-    commands: list[dict[str, str]] = []
+def _strip_command(
+    text: str, *, commands: CommandCatalog
+) -> tuple[str, Command | None]:
+    """Strip a slash command from the first non-empty line.
+
+    Returns the remaining text and the matched Command, or (original_text, None)
+    if no command matched.
+    """
+    if not text or not commands.by_command:
+        return text, None
+    lines = text.splitlines()
+    idx = next((i for i, line in enumerate(lines) if line.strip()), None)
+    if idx is None:
+        return text, None
+    line = lines[idx].lstrip()
+    if not line.startswith("/"):
+        return text, None
+    parts = line.split(maxsplit=1)
+    cmd_text = parts[0][1:]
+    if "@" in cmd_text:
+        cmd_text = cmd_text.split("@", 1)[0]
+    normalized = normalize_command(cmd_text)
+    command = commands.by_command.get(normalized)
+    if command is None:
+        return text, None
+    remainder = parts[1] if len(parts) > 1 else ""
+    if remainder:
+        lines[idx] = remainder
+    else:
+        lines.pop(idx)
+    args_text = "\n".join(lines).strip()
+    return args_text, command
+
+
+def _trim_command_description(text: str, *, limit: int = 64) -> str:
+    """Trim a command description to fit Telegram's limit (64 chars)."""
+    normalized = " ".join(text.split())
+    if len(normalized) <= limit:
+        return normalized
+    if limit <= 3:
+        return normalized[:limit]
+    return normalized[: limit - 3].rstrip() + "..."
+
+
+def _build_bot_commands(
+    router: AutoRouter,
+    *,
+    commands: CommandCatalog | None = None,
+) -> list[dict[str, str]]:
+    result: list[dict[str, str]] = []
     seen: set[str] = set()
     for entry in router.available_entries:
         cmd = entry.engine.lower()
         if cmd in seen:
             continue
-        commands.append({"command": cmd, "description": f"start {cmd}"})
+        result.append({"command": cmd, "description": f"start {cmd}"})
         seen.add(cmd)
     if "cancel" not in seen:
-        commands.append({"command": "cancel", "description": "cancel run"})
-    return commands
+        result.append({"command": "cancel", "description": "cancel run"})
+    if commands is not None:
+        for command in sorted(commands.commands, key=lambda c: c.name.lower()):
+            cmd = normalize_command(command.name)
+            if not cmd or cmd in seen:
+                continue
+            description = _trim_command_description(command.description)
+            result.append({"command": cmd, "description": description})
+            seen.add(cmd)
+    return result
 
 
 async def _set_command_menu(cfg: TelegramBridgeConfig) -> None:
-    commands = _build_bot_commands(cfg.router)
+    commands = _build_bot_commands(cfg.router, commands=cfg.commands)
     if not commands:
         return
     try:
@@ -232,6 +294,7 @@ class TelegramBridgeConfig:
     chat_id: int
     startup_msg: str
     exec_cfg: ExecBridgeConfig
+    commands: CommandCatalog = field(default_factory=CommandCatalog.empty)
 
 
 async def _send_plain(
@@ -530,6 +593,11 @@ async def run_main_loop(
                 text, engine_override = _strip_engine_command(
                     text, engine_ids=cfg.router.engine_ids
                 )
+
+                # Check for custom slash commands
+                args_text, matched_command = _strip_command(text, commands=cfg.commands)
+                if matched_command is not None:
+                    text = build_command_prompt(matched_command, args_text)
 
                 r = msg.get("reply_to_message") or {}
                 resume_token = cfg.router.resolve_resume(text, r.get("text"))
