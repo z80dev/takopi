@@ -17,6 +17,9 @@ from .logging import get_logger
 logger = get_logger(__name__)
 
 _COMMAND_NORMALIZE_RE = re.compile(r"[^a-z0-9_]")
+_FRONTMATTER_BOUNDARY = "---"
+def _default_command_dirs() -> tuple[Path, ...]:
+    return (Path.home() / ".claude" / "commands",)
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,7 +104,7 @@ def parse_command_dirs(config: dict) -> list[Path]:
     """Parse command_dirs from config, returning list of Path objects."""
     value = config.get("command_dirs")
     if value is None:
-        return []
+        return [path for path in _default_command_dirs() if path.is_dir()]
     if isinstance(value, str):
         items = [value]
     elif isinstance(value, list):
@@ -119,6 +122,33 @@ def parse_command_dirs(config: dict) -> list[Path]:
     return roots
 
 
+def _parse_frontmatter(lines: list[str]) -> tuple[dict[str, str], int | None]:
+    if not lines or lines[0].strip() != _FRONTMATTER_BOUNDARY:
+        return {}, None
+    end_idx = None
+    for idx in range(1, len(lines)):
+        if lines[idx].strip() == _FRONTMATTER_BOUNDARY:
+            end_idx = idx
+            break
+    if end_idx is None:
+        return {}, None
+    data: dict[str, str] = {}
+    for line in lines[1:end_idx]:
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        key = key.strip().lower()
+        value = value.strip()
+        if not key:
+            continue
+        if (value.startswith('"') and value.endswith('"')) or (
+            value.startswith("'") and value.endswith("'")
+        ):
+            value = value[1:-1]
+        data[key] = value
+    return data, end_idx + 1
+
+
 def _parse_command_file(path: Path, source: str) -> Command | None:
     """Parse a single command file, returning Command or None on error."""
     try:
@@ -133,11 +163,21 @@ def _parse_command_file(path: Path, source: str) -> Command | None:
     # Extract description from first line if it's a heading
     description = f"run {name}"
     prompt_start = 0
-    if lines and lines[0].startswith("#"):
-        heading = lines[0].lstrip("#").strip()
-        if heading:
+    frontmatter, frontmatter_end = _parse_frontmatter(lines)
+    description_from_frontmatter = False
+    if frontmatter_end is not None:
+        prompt_start = frontmatter_end
+        frontmatter_desc = frontmatter.get("description") or frontmatter.get("title")
+        if frontmatter_desc:
+            description = frontmatter_desc
+            description_from_frontmatter = True
+    while prompt_start < len(lines) and not lines[prompt_start].strip():
+        prompt_start += 1
+    if prompt_start < len(lines) and lines[prompt_start].startswith("#"):
+        heading = lines[prompt_start].lstrip("#").strip()
+        if heading and not description_from_frontmatter:
             description = heading
-        prompt_start = 1
+        prompt_start += 1
 
     prompt = "\n".join(lines[prompt_start:]).strip()
     if not prompt:

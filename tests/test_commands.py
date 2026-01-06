@@ -212,6 +212,39 @@ class TestParseCommandFile:
 
         assert command is None  # Empty prompts are rejected
 
+    def test_with_frontmatter(self, tmp_path: Path) -> None:
+        path = tmp_path / "review.md"
+        path.write_text(
+            "---\n"
+            "description: Review code for best practices\n"
+            "---\n"
+            "\n"
+            "Please review this code."
+        )
+        command = _parse_command_file(path, "test")
+
+        assert command is not None
+        assert command.name == "review"
+        assert command.description == "Review code for best practices"
+        assert command.prompt == "Please review this code."
+
+    def test_with_frontmatter_and_heading(self, tmp_path: Path) -> None:
+        path = tmp_path / "review.md"
+        path.write_text(
+            "---\n"
+            "title: Command title\n"
+            "---\n"
+            "# Heading\n"
+            "\n"
+            "Please review this code."
+        )
+        command = _parse_command_file(path, "test")
+
+        assert command is not None
+        assert command.name == "review"
+        assert command.description == "Command title"
+        assert command.prompt == "Please review this code."
+
     def test_file_not_found(self, tmp_path: Path) -> None:
         path = tmp_path / "missing.md"
         command = _parse_command_file(path, "test")
@@ -219,9 +252,17 @@ class TestParseCommandFile:
 
 
 class TestParseCommandDirs:
-    def test_no_config(self) -> None:
+    def test_no_config(self, tmp_path: Path, monkeypatch) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
         result = parse_command_dirs({})
         assert result == []
+
+    def test_no_config_uses_claude_dir(self, tmp_path: Path, monkeypatch) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        claude_dir = tmp_path / ".claude" / "commands"
+        claude_dir.mkdir(parents=True)
+        result = parse_command_dirs({})
+        assert result == [claude_dir]
 
     def test_string_value(self, tmp_path: Path) -> None:
         config = {"command_dirs": str(tmp_path)}
