@@ -19,7 +19,10 @@ logger = get_logger(__name__)
 _COMMAND_NORMALIZE_RE = re.compile(r"[^a-z0-9_]")
 _FRONTMATTER_BOUNDARY = "---"
 def _default_command_dirs() -> tuple[Path, ...]:
-    return (Path.home() / ".claude" / "commands",)
+    return (
+        Path.home() / ".takopi" / "commands",
+        Path.home() / ".claude" / "commands",
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +34,7 @@ class Command:
     prompt: str
     location: Path
     source: str
+    runner: str | None = None  # Optional runner override (e.g., "opencode", "claude")
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,12 +188,16 @@ def _parse_command_file(path: Path, source: str) -> Command | None:
         logger.warning("commands.empty_prompt", path=str(path))
         return None
 
+    # Extract runner override from frontmatter
+    runner = frontmatter.get("runner")
+
     return Command(
         name=name,
         description=description,
         prompt=prompt,
         location=path,
         source=source,
+        runner=runner,
     )
 
 

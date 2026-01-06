@@ -598,6 +598,9 @@ async def run_main_loop(
                 args_text, matched_command = _strip_command(text, commands=cfg.commands)
                 if matched_command is not None:
                     text = build_command_prompt(matched_command, args_text)
+                    # Use command's runner if specified and no explicit engine override
+                    if engine_override is None and matched_command.runner:
+                        engine_override = matched_command.runner
 
                 r = msg.get("reply_to_message") or {}
                 resume_token = cfg.router.resolve_resume(text, r.get("text"))

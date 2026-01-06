@@ -250,6 +250,32 @@ class TestParseCommandFile:
         command = _parse_command_file(path, "test")
         assert command is None
 
+    def test_with_runner(self, tmp_path: Path) -> None:
+        path = tmp_path / "restart.md"
+        path.write_text(
+            "---\n"
+            "description: Restart service\n"
+            "runner: opencode\n"
+            "---\n"
+            "\n"
+            "Restart the service now."
+        )
+        command = _parse_command_file(path, "test")
+
+        assert command is not None
+        assert command.name == "restart"
+        assert command.description == "Restart service"
+        assert command.prompt == "Restart the service now."
+        assert command.runner == "opencode"
+
+    def test_without_runner(self, tmp_path: Path) -> None:
+        path = tmp_path / "review.md"
+        path.write_text("# Review code\n\nReview this code.")
+        command = _parse_command_file(path, "test")
+
+        assert command is not None
+        assert command.runner is None
+
 
 class TestParseCommandDirs:
     def test_no_config(self, tmp_path: Path, monkeypatch) -> None:
@@ -263,6 +289,23 @@ class TestParseCommandDirs:
         claude_dir.mkdir(parents=True)
         result = parse_command_dirs({})
         assert result == [claude_dir]
+
+    def test_no_config_uses_takopi_dir(self, tmp_path: Path, monkeypatch) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        takopi_dir = tmp_path / ".takopi" / "commands"
+        takopi_dir.mkdir(parents=True)
+        result = parse_command_dirs({})
+        assert result == [takopi_dir]
+
+    def test_no_config_uses_both_dirs(self, tmp_path: Path, monkeypatch) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        takopi_dir = tmp_path / ".takopi" / "commands"
+        claude_dir = tmp_path / ".claude" / "commands"
+        takopi_dir.mkdir(parents=True)
+        claude_dir.mkdir(parents=True)
+        result = parse_command_dirs({})
+        # takopi dir comes first (higher priority)
+        assert result == [takopi_dir, claude_dir]
 
     def test_string_value(self, tmp_path: Path) -> None:
         config = {"command_dirs": str(tmp_path)}
