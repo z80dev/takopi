@@ -190,32 +190,32 @@ def _build_bot_commands(
     commands: CommandCatalog | None = None,
     has_profiles: bool = False,
 ) -> list[dict[str, str]]:
-    commands: list[dict[str, str]] = []
+    result: list[dict[str, str]] = []
     seen: set[str] = set()
     for entry in router.available_entries:
         cmd = entry.engine.lower()
         if cmd in seen:
             continue
-        commands.append({"command": cmd, "description": f"start {cmd}"})
+        result.append({"command": cmd, "description": f"start {cmd}"})
         seen.add(cmd)
     if "cancel" not in seen:
-        commands.append({"command": "cancel", "description": "cancel run"})
+        result.append({"command": "cancel", "description": "cancel run"})
     if "default" not in seen:
-        commands.append({"command": "default", "description": "change default engine"})
+        result.append({"command": "default", "description": "change default engine"})
     if has_profiles:
         if "profile" not in seen:
-            commands.append({"command": "profile", "description": "switch profile"})
+            result.append({"command": "profile", "description": "switch profile"})
         if "profiles" not in seen:
-            commands.append({"command": "profiles", "description": "list profiles"})
+            result.append({"command": "profiles", "description": "list profiles"})
     if commands is not None:
         for command in sorted(commands.commands, key=lambda item: item.name.lower()):
             cmd = normalize_command(command.name)
             if not cmd or cmd in seen:
                 continue
             description = _trim_command_description(command.description)
-            commands.append({"command": cmd, "description": description})
+            result.append({"command": cmd, "description": description})
             seen.add(cmd)
-    return commands
+    return result
 
 
 async def _set_command_menu(cfg: TelegramBridgeConfig) -> None:
