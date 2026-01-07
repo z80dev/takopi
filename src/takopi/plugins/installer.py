@@ -36,7 +36,7 @@ def _ensure_venv(path: Path) -> None:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     logger.info("plugins.venv.create", path=str(path))
-    builder = venv.EnvBuilder(with_pip=True)
+    builder = venv.EnvBuilder(with_pip=True, symlinks=True)
     builder.create(path)
 
 
@@ -56,7 +56,26 @@ def _load_plugin_venv() -> PluginVenv:
     python = _venv_python(venv_root)
     if not python.exists():
         raise ConfigError(f"Plugin venv python not found at {python}")
-    site_packages = _site_packages_for(python)
+    try:
+        site_packages = _site_packages_for(python)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        logger.warning(
+            "plugins.venv.recreate",
+            path=str(venv_root),
+            error=str(exc),
+        )
+        if venv_root.exists():
+            shutil.rmtree(venv_root)
+        _ensure_venv(venv_root)
+        python = _venv_python(venv_root)
+        if not python.exists():
+            raise ConfigError(f"Plugin venv python not found at {python}") from exc
+        try:
+            site_packages = _site_packages_for(python)
+        except (OSError, subprocess.CalledProcessError) as exc2:
+            raise ConfigError(
+                f"Plugin venv python failed to run at {python}"
+            ) from exc2
     return PluginVenv(path=venv_root, python=python, site_packages=site_packages)
 
 
