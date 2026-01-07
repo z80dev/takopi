@@ -1,9 +1,13 @@
 from typing import cast
+from pathlib import Path
 
 import click
 import typer
+import pytest
 
 from takopi import cli, engines
+from takopi.backends import EngineBackend
+from takopi.runners.mock import Return, ScriptRunner
 
 
 def test_engine_discovery_skips_non_backend() -> None:
@@ -37,3 +41,51 @@ def test_engine_commands_do_not_expose_engine_id_option() -> None:
         assert "--final-notify" in options
         assert "--debug" in options
         assert not any(opt.lstrip("-") == "engine-id" for opt in options)
+
+
+def test_entry_point_backends_are_discovered(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _FakeEntryPoint:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def load(self) -> EngineBackend:
+            return EngineBackend(
+                id="epengine",
+                build_runner=lambda _cfg, _path: ScriptRunner(
+                    [Return(answer="ok")], engine="epengine"
+                ),
+            )
+
+    class _FakeEntryPoints(list):
+        def select(self, *, group: str) -> list:
+            if group == "takopi.backends":
+                return self
+            return []
+
+    monkeypatch.setattr(
+        "takopi.engines.metadata.entry_points",
+        lambda: _FakeEntryPoints([_FakeEntryPoint("epengine")]),
+    )
+    engines._backends.cache_clear()
+    assert "epengine" in engines.list_backend_ids()
+    engines._backends.cache_clear()
+
+
+def test_build_router_skips_path_check_for_python_backends() -> None:
+    backend = EngineBackend(
+        id="pyonly",
+        build_runner=lambda _cfg, _path: ScriptRunner(
+            [Return(answer="ok")], engine="pyonly"
+        ),
+        cli_cmd=None,
+        install_cmd=None,
+    )
+    router = cli._build_router(
+        config={},
+        config_path=Path("takopi.toml"),
+        backends=[backend],
+        default_engine="pyonly",
+    )
+    entry = router.entries[0]
+    assert entry.available is True
+    assert entry.issue is None

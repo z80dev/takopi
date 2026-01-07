@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import pkgutil
+from importlib import metadata
 from collections.abc import Mapping
 from functools import cache
 from pathlib import Path
@@ -10,12 +11,59 @@ from typing import Any
 
 from .backends import EngineBackend, EngineConfig
 from .config import ConfigError
+from .logging import get_logger
+
+logger = get_logger(__name__)
 
 
 def _discover_backends() -> dict[str, EngineBackend]:
     import takopi.runners as runners_pkg
 
     backends: dict[str, EngineBackend] = {}
+    try:
+        entry_points = metadata.entry_points().select(group="takopi.backends")
+    except Exception as exc:
+        logger.warning(
+            "backends.entry_points_failed",
+            error=str(exc),
+            error_type=exc.__class__.__name__,
+        )
+        entry_points = []
+
+    for ep in entry_points:
+        try:
+            obj = ep.load()
+        except Exception as exc:
+            logger.warning(
+                "backends.load_failed",
+                entry_point=ep.name,
+                error=str(exc),
+                error_type=exc.__class__.__name__,
+            )
+            continue
+        backend = obj
+        if callable(obj) and not isinstance(obj, EngineBackend):
+            try:
+                backend = obj()
+            except Exception as exc:
+                logger.warning(
+                    "backends.factory_failed",
+                    entry_point=ep.name,
+                    error=str(exc),
+                    error_type=exc.__class__.__name__,
+                )
+                continue
+        if not isinstance(backend, EngineBackend):
+            logger.warning(
+                "backends.invalid",
+                entry_point=ep.name,
+                value=repr(obj),
+            )
+            continue
+        if backend.id in backends:
+            logger.warning("backends.duplicate", backend_id=backend.id)
+            continue
+        backends[backend.id] = backend
     prefix = runners_pkg.__name__ + "."
 
     for module_info in pkgutil.iter_modules(runners_pkg.__path__, prefix):
@@ -28,7 +76,8 @@ def _discover_backends() -> dict[str, EngineBackend]:
         if not isinstance(backend, EngineBackend):
             raise RuntimeError(f"{module_name}.BACKEND is not an EngineBackend")
         if backend.id in backends:
-            raise RuntimeError(f"Duplicate backend id: {backend.id}")
+            logger.warning("backends.duplicate", backend_id=backend.id)
+            continue
         backends[backend.id] = backend
 
     return backends
