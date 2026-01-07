@@ -9,6 +9,7 @@ from takopi.commands import (
     load_commands_from_dirs,
     normalize_command,
     parse_command_dirs,
+    strip_command,
     _parse_command_file,
 )
 from takopi.telegram.bridge import _trim_command_description
@@ -227,6 +228,72 @@ class TestParseCommandFile:
         assert command.name == "review"
         assert command.description == "Review code for best practices"
         assert command.prompt == "Please review this code."
+
+
+class TestStripCommand:
+    def _make_catalog(self, *names: str) -> CommandCatalog:
+        commands = [
+            Command(
+                name=name,
+                description=f"Test {name}",
+                prompt="Test prompt.",
+                location=Path(f"/test/{name}.md"),
+                source="test",
+            )
+            for name in names
+        ]
+        return CommandCatalog.from_commands(commands)
+
+    def test_matches_command(self) -> None:
+        catalog = self._make_catalog("review", "explain")
+        args, command = strip_command("/review the code", commands=catalog)
+        assert command is not None
+        assert command.name == "review"
+        assert args == "the code"
+
+    def test_with_bot_suffix(self) -> None:
+        catalog = self._make_catalog("review")
+        args, command = strip_command("/review@mybot the code", commands=catalog)
+        assert command is not None
+        assert command.name == "review"
+        assert args == "the code"
+
+    def test_on_own_line(self) -> None:
+        catalog = self._make_catalog("review")
+        args, command = strip_command("/review\nthe code", commands=catalog)
+        assert command is not None
+        assert command.name == "review"
+        assert args == "the code"
+
+    def test_no_match(self) -> None:
+        catalog = self._make_catalog("review")
+        args, command = strip_command("/unknown the code", commands=catalog)
+        assert command is None
+        assert args == "/unknown the code"
+
+    def test_empty_catalog(self) -> None:
+        catalog = CommandCatalog.empty()
+        args, command = strip_command("/review the code", commands=catalog)
+        assert command is None
+        assert args == "/review the code"
+
+    def test_empty_text(self) -> None:
+        catalog = self._make_catalog("review")
+        args, command = strip_command("", commands=catalog)
+        assert command is None
+        assert args == ""
+
+    def test_no_slash(self) -> None:
+        catalog = self._make_catalog("review")
+        args, command = strip_command("review the code", commands=catalog)
+        assert command is None
+        assert args == "review the code"
+
+    def test_normalizes_name(self) -> None:
+        catalog = self._make_catalog("code_review")
+        args, command = strip_command("/code-review file.py", commands=catalog)
+        assert command is not None
+        assert command.name == "code_review"
 
     def test_with_frontmatter_and_heading(self, tmp_path: Path) -> None:
         path = tmp_path / "review.md"

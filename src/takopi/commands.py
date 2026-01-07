@@ -104,6 +104,40 @@ def build_command_prompt(command: Command, args_text: str) -> str:
     return prompt or args or ""
 
 
+def strip_command(
+    text: str, *, commands: CommandCatalog
+) -> tuple[str, Command | None]:
+    """Strip a slash command from the first non-empty line.
+
+    Returns the remaining text and the matched Command, or (original_text, None)
+    if no command matched.
+    """
+    if not text or not commands.by_command:
+        return text, None
+    lines = text.splitlines()
+    idx = next((i for i, line in enumerate(lines) if line.strip()), None)
+    if idx is None:
+        return text, None
+    line = lines[idx].lstrip()
+    if not line.startswith("/"):
+        return text, None
+    parts = line.split(maxsplit=1)
+    cmd_text = parts[0][1:]
+    if "@" in cmd_text:
+        cmd_text = cmd_text.split("@", 1)[0]
+    normalized = normalize_command(cmd_text)
+    command = commands.by_command.get(normalized)
+    if command is None:
+        return text, None
+    remainder = parts[1] if len(parts) > 1 else ""
+    if remainder:
+        lines[idx] = remainder
+    else:
+        lines.pop(idx)
+    args_text = "\n".join(lines).strip()
+    return args_text, command
+
+
 def parse_command_dirs(config: dict) -> list[Path]:
     """Parse command_dirs from config, returning list of Path objects."""
     value = config.get("command_dirs")
