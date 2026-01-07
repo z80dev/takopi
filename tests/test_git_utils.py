@@ -1,5 +1,7 @@
+import subprocess
 from pathlib import Path
 
+from takopi.utils import git as git_utils
 from takopi.utils.git import resolve_default_base, resolve_main_worktree_root
 
 
@@ -36,6 +38,20 @@ def test_resolve_main_worktree_root_returns_cwd_for_bare_repo(monkeypatch) -> No
     assert resolve_main_worktree_root(cwd) == cwd
 
 
+def test_resolve_main_worktree_root_handles_relative_common_dir(monkeypatch) -> None:
+    cwd = Path("/repo/worktree")
+
+    def _fake_stdout(args, **kwargs):
+        if args[:2] == ["rev-parse", "--path-format=absolute"]:
+            return ".git"
+        if args == ["rev-parse", "--is-bare-repository"]:
+            return "false"
+        return None
+
+    monkeypatch.setattr("takopi.utils.git.git_stdout", _fake_stdout)
+    assert resolve_main_worktree_root(cwd) == cwd
+
+
 def test_resolve_default_base_prefers_master_over_main(monkeypatch) -> None:
     def _fake_stdout(args, **kwargs):
         if args[:2] == ["symbolic-ref", "-q"]:
@@ -54,3 +70,62 @@ def test_resolve_default_base_prefers_master_over_main(monkeypatch) -> None:
     monkeypatch.setattr("takopi.utils.git.git_stdout", _fake_stdout)
     monkeypatch.setattr("takopi.utils.git.git_ok", _fake_ok)
     assert resolve_default_base(Path("/repo")) == "master"
+
+
+def test_resolve_default_base_uses_origin_head(monkeypatch) -> None:
+    def _fake_stdout(args, **kwargs):
+        if args[:3] == ["symbolic-ref", "-q", "refs/remotes/origin/HEAD"]:
+            return "refs/remotes/origin/main"
+        return None
+
+    monkeypatch.setattr("takopi.utils.git.git_stdout", _fake_stdout)
+    assert resolve_default_base(Path("/repo")) == "main"
+
+
+def test_resolve_default_base_uses_current_branch(monkeypatch) -> None:
+    def _fake_stdout(args, **kwargs):
+        if args[:2] == ["symbolic-ref", "-q"]:
+            return None
+        if args == ["branch", "--show-current"]:
+            return "dev"
+        return None
+
+    monkeypatch.setattr("takopi.utils.git.git_stdout", _fake_stdout)
+    assert resolve_default_base(Path("/repo")) == "dev"
+
+
+def test_git_stdout_returns_none_on_failure(monkeypatch) -> None:
+    def _fake_run(*_args, **_kwargs):
+        return subprocess.CompletedProcess(["git"], 1, stdout="", stderr="err")
+
+    monkeypatch.setattr(git_utils, "_run_git", _fake_run)
+    assert git_utils.git_stdout(["status"], cwd=Path("/repo")) is None
+
+
+def test_git_ok_true_on_success(monkeypatch) -> None:
+    def _fake_run(*_args, **_kwargs):
+        return subprocess.CompletedProcess(["git"], 0, stdout="", stderr="")
+
+    monkeypatch.setattr(git_utils, "_run_git", _fake_run)
+    assert git_utils.git_ok(["status"], cwd=Path("/repo")) is True
+
+
+def test_git_run_returns_none_when_git_missing(monkeypatch) -> None:
+    def _fake_run(*_args, **_kwargs):
+        raise FileNotFoundError
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
+    assert git_utils.git_run(["status"], cwd=Path("/repo")) is None
+
+
+def test_git_stdout_strips_output(monkeypatch) -> None:
+    def _fake_run(*_args, **_kwargs):
+        return subprocess.CompletedProcess(["git"], 0, stdout="  hi\n", stderr="")
+
+    monkeypatch.setattr(git_utils, "_run_git", _fake_run)
+    assert git_utils.git_stdout(["status"], cwd=Path("/repo")) == "hi"
+
+
+def test_git_is_worktree_true(monkeypatch) -> None:
+    monkeypatch.setattr(git_utils, "git_stdout", lambda *_a, **_k: "true")
+    assert git_utils.git_is_worktree(Path("/repo")) is True

@@ -47,3 +47,49 @@ def test_init_writes_project(monkeypatch, tmp_path) -> None:
     assert 'worktrees_dir = ".worktrees"' in saved
     assert 'default_engine = "codex"' in saved
     assert 'worktree_base = "main"' in saved
+
+
+def test_parse_projects_resolves_relative_path(tmp_path: Path) -> None:
+    config_path = tmp_path / "takopi.toml"
+    config = {"projects": {"z80": {"path": "repo"}}}
+    parsed = parse_projects_config(
+        config,
+        config_path=config_path,
+        engine_ids=["codex"],
+        reserved=("cancel",),
+    )
+    project = parsed.projects["z80"]
+    assert project.path == config_path.parent / "repo"
+
+
+def test_parse_projects_rejects_non_table() -> None:
+    config = {"projects": ["not-a-table"]}
+    with pytest.raises(ConfigError, match="projects"):
+        parse_projects_config(
+            config,
+            config_path=Path("takopi.toml"),
+            engine_ids=["codex"],
+            reserved=("cancel",),
+        )
+
+
+def test_parse_projects_rejects_bad_worktrees_dir() -> None:
+    config = {"projects": {"z80": {"path": "/tmp/repo", "worktrees_dir": 5}}}
+    with pytest.raises(ConfigError, match="worktrees_dir"):
+        parse_projects_config(
+            config,
+            config_path=Path("takopi.toml"),
+            engine_ids=["codex"],
+            reserved=("cancel",),
+        )
+
+
+def test_parse_projects_rejects_empty_alias() -> None:
+    config = {"projects": {"": {"path": "/tmp/repo"}}}
+    with pytest.raises(ConfigError, match="project alias"):
+        parse_projects_config(
+            config,
+            config_path=Path("takopi.toml"),
+            engine_ids=["codex"],
+            reserved=("cancel",),
+        )
