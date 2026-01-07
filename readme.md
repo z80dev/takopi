@@ -2,11 +2,13 @@
 
 🐙 *he just wants to help-pi*
 
-telegram bridge for codex, claude code, opencode, pi, and [other agents](docs/adding-a-runner.md). runs the agent cli, streams progress, and supports resumable sessions.
+telegram bridge for codex, claude code, opencode, pi, and [other agents](docs/adding-a-runner.md). manage multiple projects and worktrees, stream progress, and resume sessions anywhere.
 
 ## features
 
-stateless resume, continue a thread in the chat or pick up in the terminal.
+projects and worktrees: register repos with `takopi init`, target them via `/project`, route to branches with `@branch`.
+
+stateless resume: continue a thread in the chat or pick up in the terminal.
 
 progress updates while agent runs (commands, tools, notes, file changes, elapsed time).
 
@@ -94,6 +96,28 @@ command_dirs = ["~/.takopi/commands", "~/.claude/commands"]
 ```
 
 See [`docs/plugins.md`](docs/plugins.md) for plugin authoring and config details.
+
+## projects (optional)
+
+register the current repo as a project alias:
+
+```sh
+takopi init z80
+```
+
+`takopi init` writes the repo root to `[projects.<alias>].path`. if you run it inside a git worktree, it resolves the main checkout and records that path instead of the worktree.
+
+example:
+
+```toml
+default_project = "z80"
+
+[projects.z80]
+path = "~/dev/z80"
+worktrees_dir = ".worktrees"
+default_engine = "codex"
+worktree_base = "master"
+```
 
 ## usage
 
