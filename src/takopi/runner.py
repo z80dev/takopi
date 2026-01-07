@@ -6,7 +6,7 @@ import json
 import re
 import subprocess
 from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any, Protocol, cast
 from weakref import WeakValueDictionary
 
@@ -635,6 +635,8 @@ def _derive_resume_regex(
 class AliasRunner:
     engine: EngineId
     base: Runner
+    _base_engine: EngineId = field(init=False)
+    _resume_re: re.Pattern[str] = field(init=False)
 
     def __post_init__(self) -> None:
         self._base_engine = self.base.engine
