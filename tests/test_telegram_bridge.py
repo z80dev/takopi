@@ -260,12 +260,25 @@ def test_collect_telegram_commands_includes_core_and_engine() -> None:
     runner = ScriptRunner(
         [Return(answer="ok")], engine=CODEX_ENGINE, resume_value="sid"
     )
-    cfg = _make_cfg(_FakeTransport(), runner)
+    projects = ProjectsConfig(
+        projects={
+            "z80": ProjectConfig(
+                alias="z80",
+                path=Path("/tmp/z80"),
+                worktrees_dir=Path(".worktrees"),
+            )
+        },
+        default_project=None,
+    )
+    cfg = _make_cfg(_FakeTransport(), runner, projects=projects)
     commands = _collect_telegram_commands(cfg)
 
     command_names = [cmd.command for cmd in commands]
     assert "help" in command_names
     assert "cancel" in command_names
+    assert "project" in command_names
+    assert "init" in command_names
+    assert "z80" in command_names
     assert "codex" in command_names
 
 
@@ -691,7 +704,17 @@ async def test_help_command_replies_with_command_list() -> None:
     plugin_manager = _make_plugin_manager(
         TelegramCommand(command="ping", description="ping takopi")
     )
-    cfg = _make_cfg(transport, plugins=plugin_manager)
+    projects = ProjectsConfig(
+        projects={
+            "z80": ProjectConfig(
+                alias="z80",
+                path=Path("/tmp/z80"),
+                worktrees_dir=Path(".worktrees"),
+            )
+        },
+        default_project=None,
+    )
+    cfg = _make_cfg(transport, plugins=plugin_manager, projects=projects)
 
     async def poller(_cfg: TelegramBridgeConfig):
         yield IncomingMessage(
@@ -710,5 +733,8 @@ async def test_help_command_replies_with_command_list() -> None:
     help_text = transport.send_calls[-1]["message"].text
     assert "/help" in help_text
     assert "/cancel" in help_text
+    assert "/project" in help_text
+    assert "/init" in help_text
+    assert "/z80" in help_text
     assert "/codex" in help_text
     assert "/ping" in help_text

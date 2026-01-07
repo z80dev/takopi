@@ -404,6 +404,8 @@ def _collect_telegram_commands(cfg: TelegramBridgeConfig) -> list[TelegramComman
             help="show or set default engine",
         )
     )
+    for cmd in _project_command_specs(cfg.projects):
+        add(cmd)
 
     for entry in cfg.router.available_entries:
         cmd = entry.engine.lower()
@@ -432,11 +434,45 @@ def _collect_telegram_commands(cfg: TelegramBridgeConfig) -> list[TelegramComman
     return commands
 
 
+def _project_command_specs(projects: ProjectsConfig) -> list[TelegramCommand]:
+    commands = [
+        TelegramCommand(
+            command="project",
+            description="show or set default project",
+            help="show or set default project",
+        ),
+        TelegramCommand(
+            command="init",
+            description="initialize a new project",
+            help="init <path> [alias]",
+        ),
+    ]
+    aliases = sorted(
+        (project.alias for project in projects.projects.values()),
+        key=str.lower,
+    )
+    for alias in aliases:
+        commands.append(
+            TelegramCommand(
+                command=alias,
+                description=f"use project {alias}",
+                help=f"use project {alias}",
+            )
+        )
+    return commands
+
+
 def _collect_help_sections(
     cfg: TelegramBridgeConfig,
-) -> tuple[list[TelegramCommand], list[TelegramCommand], dict[str, list[TelegramCommand]]]:
+) -> tuple[
+    list[TelegramCommand],
+    list[TelegramCommand],
+    list[TelegramCommand],
+    dict[str, list[TelegramCommand]],
+]:
     core: list[TelegramCommand] = []
     engines: list[TelegramCommand] = []
+    projects: list[TelegramCommand] = []
     plugins: dict[str, list[TelegramCommand]] = {}
     seen: set[str] = set()
 
@@ -480,22 +516,8 @@ def _collect_help_sections(
         ),
         core,
     )
-    add(
-        TelegramCommand(
-            command="project",
-            description="show or set default project",
-            help="show or set default project",
-        ),
-        core,
-    )
-    add(
-        TelegramCommand(
-            command="init",
-            description="initialize a new project",
-            help="init <path> [alias]",
-        ),
-        core,
-    )
+    for cmd in _project_command_specs(cfg.projects):
+        add(cmd, projects)
 
     for entry in cfg.router.available_entries:
         cmd = entry.engine.lower()
@@ -525,7 +547,7 @@ def _collect_help_sections(
         bucket = plugins.setdefault(plugin_id, [])
         add(cmd, bucket)
 
-    return core, engines, plugins
+    return core, engines, projects, plugins
 
 
 async def _set_command_menu(cfg: TelegramBridgeConfig) -> None:
@@ -725,9 +747,10 @@ def _append_help_section(
 async def _handle_help(cfg: TelegramBridgeConfig, msg: TransportIncomingMessage) -> None:
     chat_id = msg.chat_id
     user_msg_id = msg.message_id
-    core, engines, plugins = _collect_help_sections(cfg)
+    core, engines, projects, plugins = _collect_help_sections(cfg)
     lines = ["available commands:"]
     _append_help_section(lines, "core", core)
+    _append_help_section(lines, "projects", projects)
     _append_help_section(lines, "engines", engines)
     for plugin_id, cmds in plugins.items():
         _append_help_section(lines, f"plugin {plugin_id}", cmds)
