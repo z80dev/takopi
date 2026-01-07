@@ -11,12 +11,19 @@ import typer
 
 from . import __version__
 from .backends import EngineBackend
-from .config import ConfigError
+from .config import (
+    ConfigError,
+    load_or_init_config,
+    parse_projects_config,
+    write_config,
+)
 from .engines import EngineSpec, get_backend, list_backends, resolve_engine_specs
 from .lockfile import LockError, LockHandle, acquire_lock, token_fingerprint
 from .logging import get_logger, setup_logging
 from .plugins import load_plugins
 from .plugins.installer import ensure_plugins_ready
+from .router import AutoRouter, RunnerEntry
+from .runner_bridge import ExecBridgeConfig
 from .telegram.bridge import (
     TelegramBridgeConfig,
     TelegramPresenter,
@@ -26,8 +33,7 @@ from .telegram.bridge import (
 from .telegram.client import TelegramClient
 from .telegram.config import load_telegram_config
 from .telegram.onboarding import SetupResult, check_setup, interactive_setup
-from .router import AutoRouter, RunnerEntry
-from .runner_bridge import ExecBridgeConfig
+from .utils.git import resolve_default_base, resolve_main_worktree_root
 from .utils.shell_env import apply_shell_env
 
 logger = get_logger(__name__)
@@ -219,6 +225,12 @@ def _parse_bridge_config(
     engine_specs = resolve_engine_specs(
         config=config, config_path=config_path, backends=backends
     )
+    projects = parse_projects_config(
+        config,
+        config_path=config_path,
+        engine_ids=[spec.engine for spec in engine_specs],
+        reserved=("cancel", "default", "help"),
+    )
     default_engine = _resolve_default_engine(
         override=default_engine_override,
         config=config,
@@ -249,11 +261,18 @@ def _parse_bridge_config(
         plugin_parts.append(f"+{', '.join(external_plugins)}")
     plugin_list = " ".join(plugin_parts) if plugin_parts else "none"
 
+    project_aliases = sorted(
+        {project.alias for project in projects.projects.values()},
+        key=str.lower,
+    )
+    project_list = ", ".join(project_aliases) if project_aliases else "none"
+
     startup_msg = (
         f"\N{OCTOPUS} **takopi is ready**\n\n"
         f"default: `{router.default_engine}`  \n"
         f"agents: `{engine_list}`  \n"
         f"plugins: `{plugin_list}`  \n"
+        f"projects: `{project_list}`  \n"
         f"working in: `{startup_pwd}`"
     )
 
@@ -275,6 +294,7 @@ def _parse_bridge_config(
         config=config,
         config_path=config_path,
         plugins=plugins,
+        projects=projects,
     )
 
 
@@ -385,11 +405,115 @@ def _run_auto_router(
             lock_handle.release()
 
 
+def _prompt_alias(value: str | None, *, default_alias: str | None = None) -> str:
+    if value is not None:
+        alias = value
+    elif default_alias:
+        alias = typer.prompt("project alias", default=default_alias)
+    else:
+        alias = typer.prompt("project alias")
+    alias = alias.strip()
+    if not alias:
+        typer.echo("error: project alias cannot be empty", err=True)
+        raise typer.Exit(code=1)
+    return alias
+
+
+def _default_alias_from_path(path: Path) -> str | None:
+    name = path.name
+    if not name:
+        return None
+    if name.endswith(".git"):
+        name = name[: -len(".git")]
+    return name or None
+
+
+def _ensure_projects_table(config: dict, config_path: Path) -> dict:
+    projects = config.get("projects")
+    if projects is None:
+        projects = {}
+        config["projects"] = projects
+    if not isinstance(projects, dict):
+        raise ConfigError(f"Invalid `projects` in {config_path}; expected a table.")
+    return projects
+
+
+def init(
+    alias: str | None = typer.Argument(
+        None, help="Project alias (used as /alias in messages)."
+    ),
+    default: bool = typer.Option(
+        False,
+        "--default",
+        help="Set this project as the default_project.",
+    ),
+) -> None:
+    """Register the current repo as a Takopi project."""
+    config, config_path = load_or_init_config()
+
+    cwd = Path.cwd()
+    project_path = resolve_main_worktree_root(cwd) or cwd
+    default_alias = _default_alias_from_path(project_path)
+    alias = _prompt_alias(alias, default_alias=default_alias)
+
+    engine_ids = [backend.id for backend in list_backends()]
+    projects_cfg = parse_projects_config(
+        config,
+        config_path=config_path,
+        engine_ids=engine_ids,
+        reserved=("cancel", "default", "help"),
+    )
+
+    alias_key = alias.lower()
+    if alias_key in {engine.lower() for engine in engine_ids}:
+        raise ConfigError(
+            f"Invalid project alias {alias!r}; aliases must not match engine ids."
+        )
+    if alias_key in {"cancel", "default", "help"}:
+        raise ConfigError(
+            f"Invalid project alias {alias!r}; aliases must not match reserved commands."
+        )
+
+    existing = projects_cfg.projects.get(alias_key)
+    if existing is not None:
+        overwrite = typer.confirm(
+            f"project {existing.alias!r} already exists, overwrite?",
+            default=False,
+        )
+        if not overwrite:
+            raise typer.Exit(code=1)
+
+    projects = _ensure_projects_table(config, config_path)
+    if existing is not None and existing.alias in projects:
+        projects.pop(existing.alias, None)
+
+    default_engine = _default_engine_for_setup(None)
+    worktree_base = resolve_default_base(project_path)
+
+    entry: dict[str, object] = {
+        "path": str(project_path),
+        "worktrees_dir": ".worktrees",
+        "default_engine": default_engine,
+    }
+    if worktree_base:
+        entry["worktree_base"] = worktree_base
+
+    projects[alias] = entry
+    if default:
+        config["default_project"] = alias
+
+    write_config(config, config_path)
+    typer.echo(f"saved project {alias!r} to {_config_path_display(config_path)}")
+
+
 app = typer.Typer(
     add_completion=False,
     invoke_without_command=True,
     help="Run takopi with auto-router (subcommands override the default engine).",
 )
+
+
+app.command(name="init")(init)
 
 
 @app.callback()

@@ -16,6 +16,7 @@ from takopi.markdown import (
 from takopi.model import Action, ActionEvent, ResumeToken, StartedEvent, TakopiEvent
 from takopi.progress import ProgressTracker
 from takopi.telegram.render import render_markdown
+from takopi.utils.paths import reset_run_base_dir, set_run_base_dir
 from tests.factories import (
     action_completed,
     action_started,
@@ -119,6 +120,40 @@ def test_file_change_renders_relative_paths_inside_cwd() -> None:
     )
 
 
+def test_file_change_renders_change_objects(tmp_path: Path) -> None:
+    base = tmp_path / "repo"
+    base.mkdir()
+    abs_path = str(base / "changelog.md")
+    token = set_run_base_dir(base)
+    try:
+        out = render_event_cli(
+            action_completed(
+                "f-obj",
+                "file_change",
+                "ignored",
+                ok=True,
+                detail={"changes": [SimpleNamespace(path=abs_path, kind="update")]},
+            )
+        )
+    finally:
+        reset_run_base_dir(token)
+    assert any("files: update `changelog.md`" in line for line in out)
+
+
+def test_file_change_title_relativizes_absolute_title(tmp_path: Path) -> None:
+    base = tmp_path / "repo"
+    base.mkdir()
+    abs_path = str(base / "changelog.md")
+    token = set_run_base_dir(base)
+    try:
+        out = render_event_cli(
+            action_completed("f-abs", "file_change", abs_path, ok=True)
+        )
+    finally:
+        reset_run_base_dir(token)
+    assert any("files: `changelog.md`" in line for line in out)
+
+
 def test_progress_renderer_renders_progress_and_final() -> None:
     tracker = ProgressTracker(engine="codex")
     for evt in SAMPLE_EVENTS:
@@ -142,6 +177,23 @@ def test_progress_renderer_renders_progress_and_final() -> None:
     assert "answer" in final
     assert final.rstrip().endswith(
         "`codex resume 0199a213-81c0-7800-8aa1-bbab2a035a53`"
+    )
+
+
+def test_progress_renderer_footer_includes_ctx_before_resume() -> None:
+    tracker = ProgressTracker(engine="codex")
+    for evt in SAMPLE_EVENTS:
+        tracker.note_event(evt)
+
+    state = tracker.snapshot(
+        resume_formatter=_format_resume,
+        context_line="`ctx: z80 @ feat/name`",
+    )
+    formatter = MarkdownFormatter(max_actions=5)
+    parts = formatter.render_progress_parts(state, elapsed_s=0.0)
+    assert parts.footer == (
+        "`ctx: z80 @ feat/name`"
+        f"{HARD_BREAK}`codex resume 0199a213-81c0-7800-8aa1-bbab2a035a53`"
     )
 
 

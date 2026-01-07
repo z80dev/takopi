@@ -80,10 +80,10 @@ def test_build_router_skips_path_check_for_python_backends() -> None:
         cli_cmd=None,
         install_cmd=None,
     )
+    spec = engines.EngineSpec(engine="pyonly", backend=backend, config={})
     router = cli._build_router(
-        config={},
         config_path=Path("takopi.toml"),
-        backends=[backend],
+        engine_specs=[spec],
         default_engine="pyonly",
     )
     entry = router.entries[0]

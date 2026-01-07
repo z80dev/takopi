@@ -8,7 +8,7 @@ Below is a PR-by-PR plan that keeps `main` green at every step, preserves existi
 * **Slash commands** moved out of `telegram/bridge.py` into an **external plugin**
 * **Runners/backends** discoverable as plugins via entry points (`takopi.backends`)
 
-I’m basing this on the current repo layout (notably `src/takopi/telegram/bridge.py`, `src/takopi/commands.py`, `src/takopi/engines.py`, `src/takopi/cli.py`, and existing tests in `tests/test_telegram_bridge.py`, `tests/test_engine_discovery.py`).
+I’m basing this on the current repo layout (notably `src/takopi/telegram/bridge.py`, `src/takopi/engines.py`, `src/takopi/cli.py`, and existing tests in `tests/test_telegram_bridge.py`, `tests/test_engine_discovery.py`).
 
 ---
 
@@ -84,7 +84,7 @@ Add `tests/test_plugins_manager.py` covering:
 
 * Centralize “what commands exist” into one function.
 * Add `/help` support in the Telegram bridge.
-* Ensure `/help` includes *all* registered commands (for now: engines + cancel + existing `CommandCatalog`).
+* Ensure `/help` includes *all* registered commands (for now: engines + cancel).
 
 ### Changes
 
@@ -94,7 +94,7 @@ Add `tests/test_plugins_manager.py` covering:
 
   1. router engines (`cfg.router.available_entries`)
   2. core commands: `cancel`, `help`
-  3. existing custom slash commands from `cfg.commands` (current behavior)
+  3. existing custom slash commands from the legacy path (current behavior)
 
 Example shape:
 
@@ -130,7 +130,7 @@ Extend `tests/test_telegram_bridge.py`:
 
   * the bot replies
   * reply contains entries for `/help`, `/cancel`, and at least one engine command
-  * reply contains custom commands from `cfg.commands` (existing slash command catalog)
+  * reply contains custom commands from the legacy slash command catalog
 
 ### Acceptance criteria
 
@@ -147,7 +147,7 @@ Extend `tests/test_telegram_bridge.py`:
 
   * in the `/` picker
   * in `/help`
-* No changes yet to slash command execution (still the old `_strip_command` path).
+* No changes yet to slash command execution (still the old inline handling).
 
 ### Changes
 
@@ -180,7 +180,7 @@ Update `_collect_telegram_commands(cfg)` to include plugin contributions:
   1. core (`help`, `cancel`)
   2. engine commands (router)
   3. plugin commands
-  4. legacy `cfg.commands` commands (until PR 4 removes it) or flip (your choice) — I recommend plugin before legacy, because PR 4 migrates legacy into a plugin.
+  4. legacy commands (until PR 4 removes it) or flip (your choice) — I recommend plugin before legacy, because PR 4 migrates legacy into a plugin.
 
 **Dedupe policy**
 
@@ -221,16 +221,9 @@ This is the “real” migration PR that turns your example (“slash commands a
 
 * `takopi-slash-commands/src/takopi_slash_commands/plugin.py`
 
-It uses existing `src/takopi/commands.py` utilities:
-
-* `parse_command_dirs`
-* `load_commands_from_dirs`
-* `normalize_command`
-* `build_command_prompt`
-
 Plugin registers two things:
 
-1. `add_message_preprocessor(...)` that implements current `_strip_command` + rewrite logic.
+1. `add_message_preprocessor(...)` that implements slash-command parsing + rewrite logic.
 2. `add_telegram_command_provider(...)` that returns a `TelegramCommand` per loaded command file.
 
 **Enable by default**
@@ -242,7 +235,7 @@ To preserve existing behavior even if users don’t add `[plugins]` to config:
 **Telegram bridge main loop**
 Replace:
 
-* the inline “Check for custom slash commands” block that calls `_strip_command(...)`
+* the inline “Check for custom slash commands” block
   with:
 * a call into plugin manager preprocess pipeline:
 
@@ -257,11 +250,7 @@ text, engine_override = await cfg.plugins.preprocess_message(
 
 **Remove legacy command catalog from config**
 
-* Remove `commands: CommandCatalog` from `TelegramBridgeConfig`
-* Remove loading in `cli._parse_bridge_config`:
-
-  * delete `command_dirs = parse_command_dirs(config)`
-  * delete `commands = load_commands_from_dirs(...)`
+* Remove any remaining legacy command catalog plumbing from `TelegramBridgeConfig` and `cli._parse_bridge_config`.
 * Plugin will load commands itself and log `commands.loaded` like CLI currently does.
 
 **Config compatibility**
@@ -278,7 +267,7 @@ command_dirs = ["~/.takopi/commands", "~/.claude/commands"]
 
 Update `tests/test_telegram_bridge.py`:
 
-* Tests that directly import `_strip_command` will need to move to plugin tests, OR you keep `_strip_command` as a helper in `takopi.commands` and test it there.
+* Tests that directly import legacy slash command helpers should move to plugin tests.
 * Update command menu tests:
 
   * instead of passing `commands=catalog` into `_build_bot_commands`, you now assert that plugin-contributed commands appear when plugin manager is loaded with a catalog.
