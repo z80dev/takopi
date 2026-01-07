@@ -229,7 +229,7 @@ def _parse_bridge_config(
         config,
         config_path=config_path,
         engine_ids=[spec.engine for spec in engine_specs],
-        reserved=("cancel", "default", "help"),
+        reserved=("cancel", "default", "help", "project", "init"),
     )
     default_engine = _resolve_default_engine(
         override=default_engine_override,
@@ -293,6 +293,7 @@ def _parse_bridge_config(
         exec_cfg=exec_cfg,
         config=config,
         config_path=config_path,
+        startup_pwd=Path(startup_pwd),
         plugins=plugins,
         projects=projects,
     )
@@ -461,7 +462,7 @@ def init(
         config,
         config_path=config_path,
         engine_ids=engine_ids,
-        reserved=("cancel", "default", "help"),
+        reserved=("cancel", "default", "help", "project", "init"),
     )
 
     alias_key = alias.lower()
@@ -469,7 +470,7 @@ def init(
         raise ConfigError(
             f"Invalid project alias {alias!r}; aliases must not match engine ids."
         )
-    if alias_key in {"cancel", "default", "help"}:
+    if alias_key in {"cancel", "default", "help", "project", "init"}:
         raise ConfigError(
             f"Invalid project alias {alias!r}; aliases must not match reserved commands."
         )

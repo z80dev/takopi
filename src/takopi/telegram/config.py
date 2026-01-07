@@ -8,6 +8,7 @@ from ..config import ConfigError
 
 HOME_CONFIG_PATH = Path.home() / ".takopi" / "takopi.toml"
 _DEFAULT_ENGINE_RE = re.compile(r"^(\s*default_engine\s*=\s*)(.*)$")
+_DEFAULT_PROJECT_RE = re.compile(r"^(\s*default_project\s*=\s*)(.*)$")
 
 
 def _read_config(cfg_path: Path) -> dict:
@@ -65,6 +66,57 @@ def update_default_engine(config_path: Path, engine: str) -> None:
                 insert_at = idx
                 break
         new_line = f'default_engine = "{_toml_escape(engine)}"'
+        lines.insert(insert_at, new_line)
+        if insert_at + 1 < len(lines) and lines[insert_at + 1].strip():
+            lines.insert(insert_at + 1, "")
+
+    text = "\n".join(lines)
+    if raw.endswith("\n"):
+        text += "\n"
+    try:
+        config_path.write_text(text, encoding="utf-8")
+    except OSError as e:
+        raise ConfigError(f"Failed to write config file {config_path}: {e}") from e
+
+
+def update_default_project(config_path: Path, project: str) -> None:
+    try:
+        raw = config_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        raise ConfigError(f"Missing config file {config_path}.") from None
+    except OSError as e:
+        raise ConfigError(f"Failed to read config file {config_path}: {e}") from e
+
+    lines = raw.splitlines()
+    replaced = False
+    in_section = False
+
+    for idx, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            in_section = True
+        if in_section:
+            continue
+        if not stripped or stripped.startswith("#"):
+            continue
+        base, comment = (line.split("#", 1) + [""])[:2]
+        match = _DEFAULT_PROJECT_RE.match(base)
+        if not match:
+            continue
+        prefix = match.group(1)
+        comment_suffix = f" #{comment.strip()}" if comment else ""
+        lines[idx] = f'{prefix}"{_toml_escape(project)}"{comment_suffix}'.rstrip()
+        replaced = True
+        break
+
+    if not replaced:
+        insert_at = 0
+        for idx, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped and not stripped.startswith("#"):
+                insert_at = idx
+                break
+        new_line = f'default_project = "{_toml_escape(project)}"'
         lines.insert(insert_at, new_line)
         if insert_at + 1 < len(lines) and lines[insert_at + 1].strip():
             lines.insert(insert_at + 1, "")

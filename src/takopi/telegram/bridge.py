@@ -8,7 +8,7 @@ from typing import Any
 import anyio
 
 import re
-from ..config import ConfigError, ProjectsConfig, empty_projects_config
+from ..config import ConfigError, ProjectConfig, ProjectsConfig, empty_projects_config, write_config
 from ..context import RunContext
 from ..logging import bind_run_context, clear_context, get_logger
 from ..markdown import MarkdownFormatter, MarkdownParts
@@ -32,10 +32,11 @@ from ..transport import (
     SendOptions,
     Transport,
 )
+from ..utils.git import resolve_default_base, resolve_main_worktree_root
 from ..utils.paths import reset_run_base_dir, set_run_base_dir
 from ..worktrees import WorktreeError, resolve_run_cwd
 from .client import BotClient, poll_incoming
-from .config import update_default_engine
+from .config import update_default_engine, update_default_project
 from .render import prepare_telegram
 
 logger = get_logger(__name__)
@@ -80,6 +81,35 @@ def _parse_default_command(text: str) -> str | None:
     if len(parts) < 2:
         return ""
     return parts[1].strip()
+
+
+def _parse_project_command(text: str) -> str | None:
+    stripped = text.strip()
+    if not stripped:
+        return None
+    parts = stripped.split(maxsplit=1)
+    command = parts[0]
+    if command != "/project" and not command.startswith("/project@"):
+        return None
+    if len(parts) < 2:
+        return ""
+    return parts[1].strip()
+
+
+def _parse_init_command(text: str) -> tuple[str, str | None] | None:
+    """Parse /init command. Returns (path, alias) or None if not an init command."""
+    stripped = text.strip()
+    if not stripped:
+        return None
+    parts = stripped.split(maxsplit=2)
+    command = parts[0]
+    if command != "/init" and not command.startswith("/init@"):
+        return None
+    if len(parts) < 2:
+        return ("", None)
+    path = parts[1].strip()
+    alias = parts[2].strip() if len(parts) > 2 else None
+    return (path, alias)
 
 
 def _strip_engine_command(
@@ -450,6 +480,22 @@ def _collect_help_sections(
         ),
         core,
     )
+    add(
+        TelegramCommand(
+            command="project",
+            description="show or set default project",
+            help="show or set default project",
+        ),
+        core,
+    )
+    add(
+        TelegramCommand(
+            command="init",
+            description="initialize a new project",
+            help="init <path> [alias]",
+        ),
+        core,
+    )
 
     for entry in cfg.router.available_entries:
         cmd = entry.engine.lower()
@@ -639,6 +685,7 @@ class TelegramBridgeConfig:
     exec_cfg: ExecBridgeConfig
     config: dict[str, Any]
     config_path: Path
+    startup_pwd: Path = field(default_factory=Path.cwd)
     plugins: PluginManager = field(default_factory=PluginManager.empty)
     projects: ProjectsConfig = field(default_factory=empty_projects_config)
 
@@ -756,6 +803,229 @@ async def _handle_default(cfg: TelegramBridgeConfig, msg: TransportIncomingMessa
         chat_id=chat_id,
         user_msg_id=user_msg_id,
         text=f"default engine set to {engine}.",
+    )
+
+
+async def _handle_project(
+    cfg: TelegramBridgeConfig, msg: TransportIncomingMessage
+) -> None:
+    chat_id = msg.chat_id
+    user_msg_id = msg.message_id
+    text = msg.text
+    requested = _parse_project_command(text)
+    if requested is None:
+        return
+
+    projects = cfg.projects.projects
+    project_map = {alias.lower(): alias for alias in projects}
+    available_list = ", ".join(projects.keys()) if projects else "none"
+
+    if not requested:
+        current = cfg.projects.default_project or "none"
+        await _send_plain(
+            cfg.exec_cfg.transport,
+            chat_id=chat_id,
+            user_msg_id=user_msg_id,
+            text=(
+                f"default project: {current}\n"
+                f"available projects: {available_list}"
+            ),
+        )
+        return
+
+    project_key = project_map.get(requested.lower())
+    if project_key is None:
+        await _send_plain(
+            cfg.exec_cfg.transport,
+            chat_id=chat_id,
+            user_msg_id=user_msg_id,
+            text=f"unknown project {requested!r}. available: {available_list}",
+        )
+        return
+
+    if project_key == cfg.projects.default_project:
+        await _send_plain(
+            cfg.exec_cfg.transport,
+            chat_id=chat_id,
+            user_msg_id=user_msg_id,
+            text=f"default project is already {project_key}.",
+        )
+        return
+
+    try:
+        update_default_project(cfg.config_path, project_key)
+    except ConfigError as exc:
+        await _send_plain(
+            cfg.exec_cfg.transport,
+            chat_id=chat_id,
+            user_msg_id=user_msg_id,
+            text=f"error updating config: {exc}",
+        )
+        return
+
+    object.__setattr__(cfg.projects, "default_project", project_key)
+    cfg.config["default_project"] = project_key
+    await _send_plain(
+        cfg.exec_cfg.transport,
+        chat_id=chat_id,
+        user_msg_id=user_msg_id,
+        text=f"default project set to {project_key}.",
+    )
+
+
+def _default_alias_from_path(path: Path) -> str | None:
+    """Generate a default alias from a path."""
+    name = path.name
+    if not name:
+        return None
+    if name.endswith(".git"):
+        name = name[: -len(".git")]
+    if not name:
+        return None
+    return name
+
+
+def _ensure_projects_table(config: dict, config_path: Path) -> dict:
+    """Ensure projects table exists in config."""
+    projects = config.get("projects")
+    if projects is None:
+        projects = {}
+        config["projects"] = projects
+    if not isinstance(projects, dict):
+        raise ConfigError(f"Invalid `projects` in {config_path}; expected a table.")
+    return projects
+
+
+_RESERVED_COMMANDS = frozenset({"cancel", "default", "help", "project", "init"})
+
+
+async def _handle_init(
+    cfg: TelegramBridgeConfig, msg: TransportIncomingMessage
+) -> None:
+    chat_id = msg.chat_id
+    user_msg_id = msg.message_id
+    text = msg.text
+    parsed = _parse_init_command(text)
+    if parsed is None:
+        return
+
+    path_str, alias = parsed
+
+    if not path_str:
+        await _send_plain(
+            cfg.exec_cfg.transport,
+            chat_id=chat_id,
+            user_msg_id=user_msg_id,
+            text="usage: /init <path> [alias]\nexample: /init ~/dev/myproject myproj",
+        )
+        return
+
+    # Resolve path (relative to startup_pwd or absolute)
+    path = Path(path_str).expanduser()
+    if not path.is_absolute():
+        path = cfg.startup_pwd / path
+    path = path.resolve()
+
+    # Create directory if it doesn't exist
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        await _send_plain(
+            cfg.exec_cfg.transport,
+            chat_id=chat_id,
+            user_msg_id=user_msg_id,
+            text=f"error creating directory: {exc}",
+        )
+        return
+
+    # Find git root if it's a git repo
+    project_path = resolve_main_worktree_root(path) or path
+
+    # Generate alias from path if not provided
+    if alias is None:
+        alias = _default_alias_from_path(project_path)
+        if alias is None:
+            await _send_plain(
+                cfg.exec_cfg.transport,
+                chat_id=chat_id,
+                user_msg_id=user_msg_id,
+                text="error: could not generate alias from path. please provide an alias.",
+            )
+            return
+
+    alias_key = alias.lower()
+
+    # Validate alias is not an engine
+    engine_ids = [entry.engine for entry in cfg.router.available_entries]
+    if alias_key in {engine.lower() for engine in engine_ids}:
+        await _send_plain(
+            cfg.exec_cfg.transport,
+            chat_id=chat_id,
+            user_msg_id=user_msg_id,
+            text=f"error: alias {alias!r} conflicts with engine id.",
+        )
+        return
+
+    # Validate alias is not reserved
+    if alias_key in _RESERVED_COMMANDS:
+        await _send_plain(
+            cfg.exec_cfg.transport,
+            chat_id=chat_id,
+            user_msg_id=user_msg_id,
+            text=f"error: alias {alias!r} is a reserved command.",
+        )
+        return
+
+    # Check for existing project
+    existing = cfg.projects.projects.get(alias_key)
+    if existing is not None:
+        await _send_plain(
+            cfg.exec_cfg.transport,
+            chat_id=chat_id,
+            user_msg_id=user_msg_id,
+            text=f"error: project {existing.alias!r} already exists at {existing.path}.",
+        )
+        return
+
+    # Build project entry
+    worktree_base = resolve_default_base(project_path)
+    entry: dict[str, object] = {
+        "path": str(project_path),
+        "worktrees_dir": ".worktrees",
+    }
+    if worktree_base:
+        entry["worktree_base"] = worktree_base
+
+    # Update config
+    try:
+        projects_table = _ensure_projects_table(cfg.config, cfg.config_path)
+        projects_table[alias] = entry
+        write_config(cfg.config, cfg.config_path)
+    except ConfigError as exc:
+        await _send_plain(
+            cfg.exec_cfg.transport,
+            chat_id=chat_id,
+            user_msg_id=user_msg_id,
+            text=f"error updating config: {exc}",
+        )
+        return
+
+    # Update in-memory projects
+    new_project = ProjectConfig(
+        alias=alias,
+        path=project_path,
+        worktrees_dir=Path(".worktrees"),
+        default_engine=None,
+        worktree_base=worktree_base,
+    )
+    cfg.projects.projects[alias_key] = new_project
+
+    base_info = f" (base: {worktree_base})" if worktree_base else ""
+    await _send_plain(
+        cfg.exec_cfg.transport,
+        chat_id=chat_id,
+        user_msg_id=user_msg_id,
+        text=f"project {alias!r} initialized at {project_path}{base_info}",
     )
 
 
@@ -1051,6 +1321,12 @@ async def run_main_loop(
                     continue
                 if _parse_default_command(text) is not None:
                     tg.start_soon(_handle_default, cfg, msg)
+                    continue
+                if _parse_project_command(text) is not None:
+                    tg.start_soon(_handle_project, cfg, msg)
+                    continue
+                if _parse_init_command(text) is not None:
+                    tg.start_soon(_handle_init, cfg, msg)
                     continue
 
                 reply_text = msg.reply_to_text
