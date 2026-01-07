@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import anyio
 import pytest
 
@@ -7,16 +9,19 @@ from takopi.telegram.bridge import (
     _build_bot_commands,
     _handle_cancel,
     _is_cancel_command,
+    _resolve_message,
     _send_with_resume,
     _strip_engine_command,
     run_main_loop,
 )
+from takopi.context import RunContext
+from takopi.config import ProjectConfig, ProjectsConfig
 from takopi.runner_bridge import ExecBridgeConfig, RunningTask
 from takopi.markdown import MarkdownPresenter
 from takopi.model import EngineId, ResumeToken
 from takopi.router import AutoRouter, RunnerEntry
 from takopi.runners.mock import Return, ScriptRunner, Sleep, Wait
-from takopi.transport import MessageRef, RenderedMessage, SendOptions
+from takopi.transport import IncomingMessage, MessageRef, RenderedMessage, SendOptions
 
 CODEX_ENGINE = EngineId("codex")
 
@@ -354,7 +359,15 @@ async def test_telegram_transport_edit_wait_false_returns_ref() -> None:
 async def test_handle_cancel_without_reply_prompts_user() -> None:
     transport = _FakeTransport()
     cfg = _make_cfg(transport)
-    msg = {"chat": {"id": 123}, "message_id": 10}
+    msg = IncomingMessage(
+        transport="telegram",
+        chat_id=123,
+        message_id=10,
+        text="/cancel",
+        reply_to_message_id=None,
+        reply_to_text=None,
+        sender_id=123,
+    )
     running_tasks: dict = {}
 
     await _handle_cancel(cfg, msg, running_tasks)
@@ -367,11 +380,15 @@ async def test_handle_cancel_without_reply_prompts_user() -> None:
 async def test_handle_cancel_with_no_progress_message_says_nothing_running() -> None:
     transport = _FakeTransport()
     cfg = _make_cfg(transport)
-    msg = {
-        "chat": {"id": 123},
-        "message_id": 10,
-        "reply_to_message": {"text": "no message id"},
-    }
+    msg = IncomingMessage(
+        transport="telegram",
+        chat_id=123,
+        message_id=10,
+        text="/cancel",
+        reply_to_message_id=None,
+        reply_to_text="no message id",
+        sender_id=123,
+    )
     running_tasks: dict = {}
 
     await _handle_cancel(cfg, msg, running_tasks)
@@ -385,11 +402,15 @@ async def test_handle_cancel_with_finished_task_says_nothing_running() -> None:
     transport = _FakeTransport()
     cfg = _make_cfg(transport)
     progress_id = 99
-    msg = {
-        "chat": {"id": 123},
-        "message_id": 10,
-        "reply_to_message": {"message_id": progress_id},
-    }
+    msg = IncomingMessage(
+        transport="telegram",
+        chat_id=123,
+        message_id=10,
+        text="/cancel",
+        reply_to_message_id=progress_id,
+        reply_to_text=None,
+        sender_id=123,
+    )
     running_tasks: dict = {}
 
     await _handle_cancel(cfg, msg, running_tasks)
@@ -403,11 +424,15 @@ async def test_handle_cancel_cancels_running_task() -> None:
     transport = _FakeTransport()
     cfg = _make_cfg(transport)
     progress_id = 42
-    msg = {
-        "chat": {"id": 123},
-        "message_id": 10,
-        "reply_to_message": {"message_id": progress_id},
-    }
+    msg = IncomingMessage(
+        transport="telegram",
+        chat_id=123,
+        message_id=10,
+        text="/cancel",
+        reply_to_message_id=progress_id,
+        reply_to_text=None,
+        sender_id=123,
+    )
 
     running_task = RunningTask()
     running_tasks = {MessageRef(channel_id=123, message_id=progress_id): running_task}
@@ -423,11 +448,15 @@ async def test_handle_cancel_only_cancels_matching_progress_message() -> None:
     cfg = _make_cfg(transport)
     task_first = RunningTask()
     task_second = RunningTask()
-    msg = {
-        "chat": {"id": 123},
-        "message_id": 10,
-        "reply_to_message": {"message_id": 1},
-    }
+    msg = IncomingMessage(
+        transport="telegram",
+        chat_id=123,
+        message_id=10,
+        text="/cancel",
+        reply_to_message_id=1,
+        reply_to_text=None,
+        sender_id=123,
+    )
     running_tasks = {
         MessageRef(channel_id=123, message_id=1): task_first,
         MessageRef(channel_id=123, message_id=2): task_second,
@@ -446,16 +475,46 @@ def test_cancel_command_accepts_extra_text() -> None:
     assert _is_cancel_command("/cancelled") is False
 
 
+def test_resolve_message_accepts_backticked_ctx_line() -> None:
+    router = _make_router(ScriptRunner([Return(answer="ok")], engine=CODEX_ENGINE))
+    projects = ProjectsConfig(
+        projects={
+            "takopi": ProjectConfig(
+                alias="takopi",
+                path=Path("."),
+                worktrees_dir=Path(".worktrees"),
+            )
+        },
+        default_project=None,
+    )
+
+    resolved = _resolve_message(
+        text="do it",
+        reply_text="`ctx: takopi @ feat/api`",
+        router=router,
+        projects=projects,
+    )
+
+    assert resolved.prompt == "do it"
+    assert resolved.resume_token is None
+    assert resolved.engine_override is None
+    assert resolved.context == RunContext(project="takopi", branch="feat/api")
+
+
 @pytest.mark.anyio
 async def test_send_with_resume_waits_for_token() -> None:
     transport = _FakeTransport()
     cfg = _make_cfg(transport)
-    sent: list[tuple[int, int, str, ResumeToken | None]] = []
+    sent: list[tuple[int, int, str, ResumeToken, RunContext | None]] = []
 
     async def enqueue(
-        chat_id: int, user_msg_id: int, text: str, resume: ResumeToken
+        chat_id: int,
+        user_msg_id: int,
+        text: str,
+        resume: ResumeToken,
+        context: RunContext | None,
     ) -> None:
-        sent.append((chat_id, user_msg_id, text, resume))
+        sent.append((chat_id, user_msg_id, text, resume, context))
 
     running_task = RunningTask()
 
@@ -476,7 +535,7 @@ async def test_send_with_resume_waits_for_token() -> None:
         )
 
     assert sent == [
-        (123, 10, "hello", ResumeToken(engine=CODEX_ENGINE, value="abc123"))
+        (123, 10, "hello", ResumeToken(engine=CODEX_ENGINE, value="abc123"), None)
     ]
     assert transport.send_calls == []
 
@@ -485,12 +544,16 @@ async def test_send_with_resume_waits_for_token() -> None:
 async def test_send_with_resume_reports_when_missing() -> None:
     transport = _FakeTransport()
     cfg = _make_cfg(transport)
-    sent: list[tuple[int, int, str, ResumeToken | None]] = []
+    sent: list[tuple[int, int, str, ResumeToken, RunContext | None]] = []
 
     async def enqueue(
-        chat_id: int, user_msg_id: int, text: str, resume: ResumeToken
+        chat_id: int,
+        user_msg_id: int,
+        text: str,
+        resume: ResumeToken,
+        context: RunContext | None,
     ) -> None:
-        sent.append((chat_id, user_msg_id, text, resume))
+        sent.append((chat_id, user_msg_id, text, resume, context))
 
     running_task = RunningTask()
     running_task.done.set()
@@ -538,22 +601,29 @@ async def test_run_main_loop_routes_reply_to_running_resume() -> None:
     )
 
     async def poller(_cfg: TelegramBridgeConfig):
-        yield {
-            "message_id": 1,
-            "text": "first",
-            "chat": {"id": 123},
-            "from": {"id": 123},
-        }
+        yield IncomingMessage(
+            transport="telegram",
+            chat_id=123,
+            message_id=1,
+            text="first",
+            reply_to_message_id=None,
+            reply_to_text=None,
+            sender_id=123,
+        )
         await progress_ready.wait()
         assert transport.progress_ref is not None
+        assert isinstance(transport.progress_ref.message_id, int)
+        reply_id = transport.progress_ref.message_id
         reply_ready.set()
-        yield {
-            "message_id": 2,
-            "text": "followup",
-            "chat": {"id": 123},
-            "from": {"id": 123},
-            "reply_to_message": {"message_id": transport.progress_ref.message_id},
-        }
+        yield IncomingMessage(
+            transport="telegram",
+            chat_id=123,
+            message_id=2,
+            text="followup",
+            reply_to_message_id=reply_id,
+            reply_to_text=None,
+            sender_id=123,
+        )
         await stop_polling.wait()
 
     async with anyio.create_task_group() as tg:

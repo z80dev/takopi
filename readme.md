@@ -76,6 +76,28 @@ provider = "openai"
 extra_args = ["--no-color"]
 ```
 
+## projects (optional)
+
+register the current repo as a project alias:
+
+```sh
+takopi init z80
+```
+
+`takopi init` writes the repo root to `[projects.<alias>].path`. if you run it inside a git worktree, it resolves the main checkout and records that path instead of the worktree.
+
+example:
+
+```toml
+default_project = "z80"
+
+[projects.z80]
+path = "~/dev/z80"
+worktrees_dir = ".worktrees"
+default_engine = "codex"
+worktree_base = "master"
+```
+
 ## usage
 
 start takopi in the repo you want to work on:
