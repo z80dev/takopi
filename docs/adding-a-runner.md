@@ -117,6 +117,13 @@ src/takopi/runners/
 Takopi discovers engines by importing modules in `takopi.runners` and looking for a
 module-level `BACKEND: EngineBackend` (see `takopi.engines`).
 
+You can also ship a **runner plugin** via entry points instead of modifying this repo:
+
+```toml
+[project.entry-points."takopi.backends"]
+acme = "takopi_backend_acme:BACKEND"
+```
+
 ---
 
 ### Step 3 — Translate Acme JSONL into Takopi events

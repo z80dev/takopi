@@ -16,6 +16,10 @@ parallel runs across threads, per thread queue support.
 
 `/cancel` a running task.
 
+`/help` shows available commands (engines + plugins).
+
+plugin system for feature commands and runner backends.
+
 ## requirements
 
 - `uv` for installation (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
@@ -80,7 +84,15 @@ model = "gpt-4.1"
 provider = "openai"
 # optional: additional CLI arguments
 extra_args = ["--no-color"]
+
+[plugins]
+enabled = ["slash_commands", "pypi:takopi-plugin-ping"]
+
+[plugins.slash_commands]
+command_dirs = ["~/.takopi/commands", "~/.claude/commands"]
 ```
+
+See [`docs/plugins.md`](docs/plugins.md) for plugin authoring and config details.
 
 ## usage
 
