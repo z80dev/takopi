@@ -1,24 +1,29 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-import sys
 from typing import Any
 
 import anyio
 from anyio.abc import ByteReceiveStream
-from anyio.streams.buffered import BufferedByteReceiveStream
 
 from ..logging import log_pipeline
 
 
 async def iter_bytes_lines(stream: ByteReceiveStream) -> AsyncIterator[bytes]:
-    buffered = BufferedByteReceiveStream(stream)
+    buffer = bytearray()
     while True:
         try:
-            line = await buffered.receive_until(b"\n", sys.maxsize)
-        except anyio.IncompleteRead:
+            chunk = await stream.receive(65536)
+        except anyio.EndOfStream:
             return
-        yield line
+        buffer.extend(chunk)
+        while True:
+            newline_index = buffer.find(b"\n")
+            if newline_index < 0:
+                break
+            line = bytes(buffer[: newline_index + 1])
+            del buffer[: newline_index + 1]
+            yield line
 
 
 async def drain_stderr(

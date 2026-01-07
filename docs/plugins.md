@@ -69,6 +69,18 @@ Notes:
   - GitHub shorthand (`gh:owner/repo@ref` or `owner/repo@ref`)
 - GitHub shorthand accepts branch, tag, or commit in `@ref`.
 
+### Telegram install command
+
+Install and enable a plugin from chat:
+
+```
+/plugin install pypi:takopi-plugin-ping
+/plugin install gh:owner/repo@main
+```
+
+This installs into `~/.takopi/plugins/venv` and appends the spec to
+`[plugins].enabled` in `takopi.toml`.
+
 ### Command semantics
 
 Commands contributed by plugins:

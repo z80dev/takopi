@@ -4,13 +4,19 @@ import shutil
 import subprocess
 import sys
 import venv
+from importlib import invalidate_caches, metadata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from ..config import ConfigError
 from ..logging import get_logger
-from .manager import _discover_plugins, _match_plugin_spec, _parse_plugin_list
+from .manager import (
+    _discover_plugins,
+    _match_plugin_spec,
+    _parse_plugin_list,
+    _parse_plugin_spec,
+)
 
 logger = get_logger(__name__)
 
@@ -105,6 +111,33 @@ def _install_command(
     if use_uv:
         return [uv, "pip", "install", "--python", str(python), target]
     return [str(python), "-m", "pip", "install", target]
+
+
+def install_plugin(spec_raw: str) -> list[str]:
+    spec = _parse_plugin_spec(spec_raw)
+    if spec.kind not in {"pypi", "github", "id"}:
+        raise ConfigError(f"Unsupported plugin spec {spec.raw!r}")
+
+    venv_info = _load_plugin_venv()
+    _ensure_sys_path(venv_info.site_packages)
+
+    cmd = _install_command(
+        kind=spec.kind, name=spec.name, ref=spec.ref, python=venv_info.python
+    )
+    logger.info("plugins.install", plugin=spec.raw, cmd=" ".join(cmd))
+    try:
+        subprocess.run(cmd, check=True)
+    except subprocess.CalledProcessError as exc:
+        raise ConfigError(
+            f"Failed to install plugin {spec.raw!r} with exit code {exc.returncode}"
+        ) from exc
+    invalidate_caches()
+    clear_cache = getattr(metadata, "_clear_cache", None)
+    if callable(clear_cache):
+        clear_cache()
+
+    available = _discover_plugins()
+    return _match_plugin_spec(spec, available)
 
 
 def _parse_auto_install(config: dict[str, Any]) -> bool:

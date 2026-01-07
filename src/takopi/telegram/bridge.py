@@ -13,7 +13,8 @@ from ..context import RunContext
 from ..logging import bind_run_context, clear_context, get_logger
 from ..markdown import MarkdownFormatter, MarkdownParts
 from ..model import EngineId, ResumeToken
-from ..plugins import PluginManager, TelegramCommand
+from ..plugins import PluginManager, TelegramCommand, load_plugins
+from ..plugins.installer import install_plugin
 from ..progress import ProgressState, ProgressTracker
 from ..router import AutoRouter, RunnerUnavailableError
 from ..runner import Runner
@@ -110,6 +111,19 @@ def _parse_init_command(text: str) -> tuple[str, str | None] | None:
     path = parts[1].strip()
     alias = parts[2].strip() if len(parts) > 2 else None
     return (path, alias)
+
+
+def _parse_plugin_command(text: str) -> tuple[str, str] | None:
+    stripped = text.strip()
+    if not stripped:
+        return None
+    parts = stripped.split()
+    command = parts[0]
+    if command != "/plugin" and not command.startswith("/plugin@"):
+        return None
+    action = parts[1].strip().lower() if len(parts) > 1 else ""
+    arg = " ".join(parts[2:]).strip() if len(parts) > 2 else ""
+    return action, arg
 
 
 def _strip_engine_command(
@@ -404,6 +418,13 @@ def _collect_telegram_commands(cfg: TelegramBridgeConfig) -> list[TelegramComman
             help="show or set default engine",
         )
     )
+    add(
+        TelegramCommand(
+            command="plugin",
+            description="manage plugins",
+            help="plugin install <spec>",
+        )
+    )
     for cmd in _project_command_specs(cfg.projects):
         add(cmd)
 
@@ -513,6 +534,14 @@ def _collect_help_sections(
             command="default",
             description="show or set default engine",
             help="show or set default engine",
+        ),
+        core,
+    )
+    add(
+        TelegramCommand(
+            command="plugin",
+            description="manage plugins",
+            help="plugin install <spec>",
         ),
         core,
     )
@@ -919,7 +948,42 @@ def _ensure_projects_table(config: dict, config_path: Path) -> dict:
     return projects
 
 
-_RESERVED_COMMANDS = frozenset({"cancel", "default", "help", "project", "init"})
+def _ensure_plugins_table(config: dict, config_path: Path) -> dict:
+    """Ensure plugins table exists in config."""
+    plugins = config.get("plugins")
+    if plugins is None:
+        plugins = {}
+        config["plugins"] = plugins
+    if not isinstance(plugins, dict):
+        raise ConfigError(f"Invalid `plugins` in {config_path}; expected a table.")
+    return plugins
+
+
+def _normalize_plugin_list(
+    value: object, *, label: str, config_path: Path
+) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        items: list[str] = []
+        for item in value:
+            if not isinstance(item, str):
+                raise ConfigError(
+                    f"Invalid `plugins.{label}` in {config_path}; expected strings."
+                )
+            if item.strip():
+                items.append(item)
+        return items
+    raise ConfigError(
+        f"Invalid `plugins.{label}` in {config_path}; expected a string or list."
+    )
+
+
+_RESERVED_COMMANDS = frozenset(
+    {"cancel", "default", "help", "project", "init", "plugin"}
+)
 
 
 async def _handle_init(
@@ -1049,6 +1113,133 @@ async def _handle_init(
         chat_id=chat_id,
         user_msg_id=user_msg_id,
         text=f"project {alias!r} initialized at {project_path}{base_info}",
+    )
+
+
+async def _handle_plugin(cfg: TelegramBridgeConfig, msg: TransportIncomingMessage) -> None:
+    chat_id = msg.chat_id
+    user_msg_id = msg.message_id
+    text = msg.text
+    parsed = _parse_plugin_command(text)
+    if parsed is None:
+        return
+
+    action, spec = parsed
+    if not action or action in {"help", "?"}:
+        await _send_plain(
+            cfg.exec_cfg.transport,
+            chat_id=chat_id,
+            user_msg_id=user_msg_id,
+            text=(
+                "usage: /plugin install <spec>\n"
+                "examples: /plugin install pypi:takopi-plugin-ping\n"
+                "          /plugin install gh:owner/repo@main"
+            ),
+        )
+        return
+
+    if action != "install":
+        await _send_plain(
+            cfg.exec_cfg.transport,
+            chat_id=chat_id,
+            user_msg_id=user_msg_id,
+            text="unknown plugin command. try /plugin help",
+        )
+        return
+
+    if not spec:
+        await _send_plain(
+            cfg.exec_cfg.transport,
+            chat_id=chat_id,
+            user_msg_id=user_msg_id,
+            text="usage: /plugin install <spec>",
+        )
+        return
+
+    try:
+        plugins_table = _ensure_plugins_table(cfg.config, cfg.config_path)
+        enabled = _normalize_plugin_list(
+            plugins_table.get("enabled"),
+            label="enabled",
+            config_path=cfg.config_path,
+        )
+        disabled = _normalize_plugin_list(
+            plugins_table.get("disabled"),
+            label="disabled",
+            config_path=cfg.config_path,
+        )
+    except ConfigError as exc:
+        await _send_plain(
+            cfg.exec_cfg.transport,
+            chat_id=chat_id,
+            user_msg_id=user_msg_id,
+            text=f"error reading plugin config: {exc}",
+        )
+        return
+
+    was_enabled = spec in enabled
+    new_disabled = [item for item in disabled if item != spec]
+    config_changed = new_disabled != disabled
+
+    try:
+        matches = install_plugin(spec)
+    except ConfigError as exc:
+        await _send_plain(
+            cfg.exec_cfg.transport,
+            chat_id=chat_id,
+            user_msg_id=user_msg_id,
+            text=f"error installing plugin: {exc}",
+        )
+        return
+
+    if not was_enabled:
+        enabled.append(spec)
+        plugins_table["enabled"] = enabled
+        config_changed = True
+    if new_disabled:
+        plugins_table["disabled"] = new_disabled
+    elif config_changed and "disabled" in plugins_table:
+        plugins_table.pop("disabled")
+
+    if config_changed:
+        try:
+            write_config(cfg.config, cfg.config_path)
+        except ConfigError as exc:
+            await _send_plain(
+                cfg.exec_cfg.transport,
+                chat_id=chat_id,
+                user_msg_id=user_msg_id,
+                text=(
+                    "error updating config after install: "
+                    f"{exc}"
+                ),
+            )
+            return
+
+    plugins = load_plugins(
+        config=cfg.config,
+        config_path=cfg.config_path,
+        router=cfg.router,
+    )
+    object.__setattr__(cfg, "plugins", plugins)
+    await _set_command_menu(cfg)
+
+    if matches:
+        ids = ", ".join(matches)
+        result = f"installed plugin {spec!r} (ids: {ids})."
+    else:
+        result = (
+            f"installed plugin {spec!r}, but no takopi.plugins entry point was found."
+        )
+    if was_enabled:
+        result = f"{result} already enabled in config."
+    else:
+        result = f"{result} enabled in config."
+    await _send_plain(
+        cfg.exec_cfg.transport,
+        chat_id=chat_id,
+        user_msg_id=user_msg_id,
+        text=result,
     )
 
 
@@ -1341,6 +1532,9 @@ async def run_main_loop(
                     continue
                 if _is_help_command(text):
                     tg.start_soon(_handle_help, cfg, msg)
+                    continue
+                if _parse_plugin_command(text) is not None:
+                    tg.start_soon(_handle_plugin, cfg, msg)
                     continue
                 if _parse_default_command(text) is not None:
                     tg.start_soon(_handle_default, cfg, msg)
