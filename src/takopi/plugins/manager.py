@@ -20,7 +20,7 @@ from .api import (
 
 logger = get_logger(__name__)
 
-DEFAULT_ENABLED_PLUGINS = ("slash_commands",)
+DEFAULT_ENABLED_PLUGINS: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,17 +154,6 @@ def _discover_plugins() -> dict[str, PluginDefinition]:
             )
             return
         plugins[defn.plugin_id] = defn
-
-    from .slash_commands import SlashCommandsPlugin
-
-    register(
-        PluginDefinition(
-            plugin_id=SlashCommandsPlugin.id,
-            factory=SlashCommandsPlugin,
-            dist_name=None,
-            source="builtin",
-        )
-    )
 
     try:
         entry_points = metadata.entry_points().select(group="takopi.plugins")

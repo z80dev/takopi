@@ -86,7 +86,8 @@ provider = "openai"
 extra_args = ["--no-color"]
 
 [plugins]
-enabled = ["slash_commands", "pypi:takopi-plugin-ping"]
+enabled = ["gh:z80dev/takopi-slash-commands@main", "pypi:takopi-plugin-ping"]
+auto_install = true
 
 [plugins.slash_commands]
 command_dirs = ["~/.takopi/commands", "~/.claude/commands"]

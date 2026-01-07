@@ -6,7 +6,7 @@ from typing import Any
 
 import anyio
 
-from ..commands import normalize_command
+import re
 from ..runner_bridge import (
     ExecBridgeConfig,
     IncomingMessage,
@@ -27,6 +27,18 @@ from .client import BotClient
 from .render import prepare_telegram
 
 logger = get_logger(__name__)
+
+_COMMAND_NORMALIZE_RE = re.compile(r"[^a-z0-9_]")
+
+
+def normalize_command(name: str) -> str:
+    """Normalize a command name to lowercase alphanumeric with underscores."""
+    value = name.strip().lstrip("/").lower()
+    if not value:
+        return ""
+    value = _COMMAND_NORMALIZE_RE.sub("_", value)
+    value = re.sub(r"_+", "_", value).strip("_")
+    return value
 
 
 def _is_cancel_command(text: str) -> bool:

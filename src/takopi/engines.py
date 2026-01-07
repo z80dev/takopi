@@ -4,6 +4,7 @@ import importlib
 import pkgutil
 from importlib import metadata
 from collections.abc import Mapping
+from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
 from types import MappingProxyType
@@ -14,6 +15,14 @@ from .config import ConfigError
 from .logging import get_logger
 
 logger = get_logger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class EngineSpec:
+    engine: str
+    backend: EngineBackend
+    config: EngineConfig
+    derived_from: str | None = None
 
 
 def _discover_backends() -> dict[str, EngineBackend]:
@@ -118,3 +127,94 @@ def get_engine_config(
             f"Invalid `{engine_id}` config in {config_path}; expected a table."
         )
     return engine_cfg
+
+
+def resolve_engine_specs(
+    *, config: dict[str, Any], config_path: Path, backends: list[EngineBackend]
+) -> list[EngineSpec]:
+    backends_by_id = {backend.id: backend for backend in backends}
+    engine_tables: dict[str, dict[str, Any]] = {}
+
+    for key, value in config.items():
+        if key in backends_by_id:
+            if not isinstance(value, dict):
+                raise ConfigError(
+                    f"Invalid `{key}` config in {config_path}; expected a table."
+                )
+            engine_tables[key] = value
+
+    for key, value in config.items():
+        if not isinstance(value, dict):
+            continue
+        if "derives-from" not in value:
+            continue
+        if key in backends_by_id:
+            raise ConfigError(
+                f"Invalid `{key}` config in {config_path}; "
+                "`derives-from` is only allowed for derived runners."
+            )
+        engine_tables[key] = value
+
+    resolved: dict[str, EngineSpec] = {}
+    resolving: set[str] = set()
+
+    def resolve_engine(engine_id: str) -> EngineSpec:
+        if engine_id in resolved:
+            return resolved[engine_id]
+        if engine_id in resolving:
+            raise ConfigError(
+                f"Circular `derives-from` reference for engine {engine_id!r} in "
+                f"{config_path}."
+            )
+        resolving.add(engine_id)
+        cfg = engine_tables.get(engine_id)
+        if cfg is None:
+            backend = backends_by_id.get(engine_id)
+            if backend is None:
+                raise ConfigError(
+                    f"Unknown engine {engine_id!r} in {config_path}."
+                )
+            spec = EngineSpec(engine=engine_id, backend=backend, config={})
+            resolved[engine_id] = spec
+            resolving.remove(engine_id)
+            return spec
+
+        derived_from = cfg.get("derives-from")
+        if derived_from is None:
+            backend = backends_by_id.get(engine_id)
+            if backend is None:
+                raise ConfigError(
+                    f"Unknown engine {engine_id!r} in {config_path}."
+                )
+            spec = EngineSpec(engine=engine_id, backend=backend, config=dict(cfg))
+            resolved[engine_id] = spec
+            resolving.remove(engine_id)
+            return spec
+
+        if not isinstance(derived_from, str) or not derived_from.strip():
+            raise ConfigError(
+                f"Invalid `derives-from` for {engine_id!r} in {config_path}; "
+                "expected a non-empty string."
+            )
+        derived_from = derived_from.strip()
+        base_spec = resolve_engine(derived_from)
+        overrides = {key: value for key, value in cfg.items() if key != "derives-from"}
+        merged = {**base_spec.config, **overrides}
+        spec = EngineSpec(
+            engine=engine_id,
+            backend=base_spec.backend,
+            config=merged,
+            derived_from=derived_from,
+        )
+        resolved[engine_id] = spec
+        resolving.remove(engine_id)
+        return spec
+
+    for backend in backends:
+        resolve_engine(backend.id)
+
+    for key, value in engine_tables.items():
+        if "derives-from" in value:
+            resolve_engine(key)
+
+    return [resolved[key] for key in sorted(resolved)]

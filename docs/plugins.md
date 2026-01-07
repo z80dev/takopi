@@ -44,11 +44,12 @@ Feature plugins are enabled explicitly and ordered in config:
 ```toml
 [plugins]
 enabled = [
-  "slash_commands",
+  "gh:z80dev/takopi-slash-commands@main",
   "pypi:takopi-plugin-ping",
   "gh:acme/takopi-plugin-foo@v1.2.0",
 ]
 disabled = ["experimental-plugin"]
+auto_install = true
 
 [plugins.slash_commands]
 command_dirs = ["~/.takopi/commands", "~/.claude/commands"]
@@ -60,13 +61,13 @@ response = "pong"
 Notes:
 
 - **Ordering matters**: the `enabled` list defines plugin order.
-- Built-in plugins (like `slash_commands`) are enabled by default unless disabled.
+- Takopi auto-installs enabled plugins into `~/.takopi/plugins/venv` on startup.
+- Set `[plugins].auto_install = false` to disable auto-install.
 - `enabled` entries may be:
   - plugin ids (entry point names)
   - PyPI distribution names (`pypi:...` or bare names)
   - GitHub shorthand (`gh:owner/repo@ref` or `owner/repo@ref`)
 - GitHub shorthand accepts branch, tag, or commit in `@ref`.
-- Takopi does **not** auto-install plugins; install them with `pip`/`uv` first.
 
 ### Command semantics
 
@@ -82,10 +83,14 @@ Collisions:
 
 ---
 
-## Slash command plugin (built-in)
+## Slash command plugin (external)
 
-`slash_commands` is a built-in feature plugin that loads markdown commands from
-directories and rewrites `/command args` into prompts.
+`slash_commands` is an external feature plugin that loads markdown commands from
+directories and rewrites `/command args` into prompts. Install it from GitHub:
+
+```bash
+pip install 'git+https://github.com/z80dev/takopi-slash-commands.git@main'
+```
 
 Config (new, preferred):
 

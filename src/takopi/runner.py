@@ -6,7 +6,7 @@ import json
 import re
 import subprocess
 from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Protocol, cast
 from weakref import WeakValueDictionary
 
@@ -606,3 +606,93 @@ class Runner(Protocol):
         prompt: str,
         resume: ResumeToken | None,
     ) -> AsyncIterator[TakopiEvent]: ...
+
+
+def _swap_resume_command(line: str, *, base: str, alias: str) -> str:
+    match = re.match(r"^(\s*`?)(\S+)(.*)$", line)
+    if not match:
+        return line
+    prefix, _cmd, rest = match.groups()
+    return f"{prefix}{alias}{rest}"
+
+
+def _derive_resume_regex(
+    *, base_re: re.Pattern[str], base: str, alias: str
+) -> re.Pattern[str]:
+    pattern = base_re.pattern
+    escaped_base = re.escape(base)
+    escaped_alias = re.escape(alias)
+    if escaped_base in pattern:
+        pattern = pattern.replace(escaped_base, escaped_alias)
+    elif base in pattern:
+        pattern = pattern.replace(base, escaped_alias)
+    else:
+        raise RuntimeError(f"resume regex does not reference base engine {base!r}")
+    return re.compile(pattern, base_re.flags)
+
+
+@dataclass(slots=True)
+class AliasRunner:
+    engine: EngineId
+    base: Runner
+
+    def __post_init__(self) -> None:
+        self._base_engine = self.base.engine
+        base_re = getattr(self.base, "resume_re", None)
+        if not isinstance(base_re, re.Pattern):
+            raise RuntimeError(
+                f"base runner {self._base_engine!r} does not expose resume_re"
+            )
+        self._resume_re = _derive_resume_regex(
+            base_re=base_re, base=self._base_engine, alias=self.engine
+        )
+
+    def is_resume_line(self, line: str) -> bool:
+        return bool(self._resume_re.match(line))
+
+    def format_resume(self, token: ResumeToken) -> str:
+        if token.engine != self.engine:
+            raise RuntimeError(f"resume token is for engine {token.engine!r}")
+        base_token = ResumeToken(engine=self._base_engine, value=token.value)
+        base_line = self.base.format_resume(base_token)
+        return _swap_resume_command(base_line, base=self._base_engine, alias=self.engine)
+
+    def extract_resume(self, text: str | None) -> ResumeToken | None:
+        if not text:
+            return None
+        found: str | None = None
+        for match in self._resume_re.finditer(text):
+            token = match.group("token")
+            if token:
+                found = token
+        if not found:
+            return None
+        return ResumeToken(engine=self.engine, value=found)
+
+    async def run(
+        self, prompt: str, resume: ResumeToken | None
+    ) -> AsyncIterator[TakopiEvent]:
+        base_resume: ResumeToken | None = None
+        if resume is not None:
+            if resume.engine != self.engine:
+                raise RuntimeError(
+                    f"resume token is for engine {resume.engine!r}, not {self.engine!r}"
+                )
+            base_resume = ResumeToken(engine=self._base_engine, value=resume.value)
+        async for evt in self.base.run(prompt, base_resume):
+            yield self._rewrite_event(evt)
+
+    def _rewrite_event(self, evt: TakopiEvent) -> TakopiEvent:
+        if evt.engine != self._base_engine:
+            return evt
+        if isinstance(evt, StartedEvent):
+            resume = ResumeToken(engine=self.engine, value=evt.resume.value)
+            return replace(evt, engine=self.engine, resume=resume)
+        if isinstance(evt, ActionEvent):
+            return replace(evt, engine=self.engine)
+        if isinstance(evt, CompletedEvent):
+            resume = evt.resume
+            if resume is not None and resume.engine == self._base_engine:
+                resume = ResumeToken(engine=self.engine, value=resume.value)
+            return replace(evt, engine=self.engine, resume=resume)
+        return evt

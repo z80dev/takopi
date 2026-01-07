@@ -12,10 +12,11 @@ import typer
 from . import __version__
 from .backends import EngineBackend
 from .config import ConfigError
-from .engines import get_backend, get_engine_config, list_backends
+from .engines import EngineSpec, get_backend, list_backends, resolve_engine_specs
 from .lockfile import LockError, LockHandle, acquire_lock, token_fingerprint
 from .logging import get_logger, setup_logging
 from .plugins import load_plugins
+from .plugins.installer import ensure_plugins_ready
 from .telegram.bridge import (
     TelegramBridgeConfig,
     TelegramPresenter,
@@ -99,12 +100,31 @@ def _default_engine_for_setup(override: str | None) -> str:
     return value.strip()
 
 
+def _backend_for_setup(
+    *, engine_id: str, config: dict | None, config_path: Path | None
+) -> EngineBackend:
+    if config is None or config_path is None:
+        return get_backend(engine_id)
+    backends = list_backends()
+    specs = resolve_engine_specs(
+        config=config, config_path=config_path, backends=backends
+    )
+    by_engine = {spec.engine: spec.backend for spec in specs}
+    backend = by_engine.get(engine_id)
+    if backend is None:
+        available = ", ".join(sorted(by_engine))
+        raise ConfigError(
+            f"Unknown default engine {engine_id!r}. Available: {available}."
+        )
+    return backend
+
+
 def _resolve_default_engine(
     *,
     override: str | None,
     config: dict,
     config_path: Path,
-    backends: list[EngineBackend],
+    engine_ids: list[str],
 ) -> str:
     default_engine = override or config.get("default_engine") or "codex"
     if not isinstance(default_engine, str) or not default_engine.strip():
@@ -112,9 +132,9 @@ def _resolve_default_engine(
             f"Invalid `default_engine` in {config_path}; expected a non-empty string."
         )
     default_engine = default_engine.strip()
-    backend_ids = {backend.id for backend in backends}
-    if default_engine not in backend_ids:
-        available = ", ".join(sorted(backend_ids))
+    available_ids = {engine_id for engine_id in engine_ids}
+    if default_engine not in available_ids:
+        available = ", ".join(sorted(available_ids))
         raise ConfigError(
             f"Unknown default engine {default_engine!r}. Available: {available}."
         )
@@ -123,25 +143,18 @@ def _resolve_default_engine(
 
 def _build_router(
     *,
-    config: dict,
     config_path: Path,
-    backends: list[EngineBackend],
+    engine_specs: list[EngineSpec],
     default_engine: str,
 ) -> AutoRouter:
     entries: list[RunnerEntry] = []
     warnings: list[str] = []
 
-    for backend in backends:
-        engine_id = backend.id
+    for spec in engine_specs:
+        engine_id = spec.engine
+        backend = spec.backend
         issue: str | None = None
-        engine_cfg: dict
-        try:
-            engine_cfg = get_engine_config(config, engine_id, config_path)
-        except ConfigError as exc:
-            if engine_id == default_engine:
-                raise
-            issue = str(exc)
-            engine_cfg = {}
+        engine_cfg = spec.config
 
         try:
             runner = backend.build_runner(engine_cfg, config_path)
@@ -171,6 +184,11 @@ def _build_router(
         if issue and engine_id != default_engine:
             warnings.append(f"{engine_id}: {issue}")
 
+        if spec.derived_from is not None:
+            from .runner import AliasRunner
+
+            runner = AliasRunner(engine=engine_id, base=runner)
+
         entries.append(
             RunnerEntry(
                 engine=engine_id,
@@ -198,19 +216,22 @@ def _parse_bridge_config(
     startup_pwd = os.getcwd()
 
     backends = list_backends()
+    engine_specs = resolve_engine_specs(
+        config=config, config_path=config_path, backends=backends
+    )
     default_engine = _resolve_default_engine(
         override=default_engine_override,
         config=config,
         config_path=config_path,
-        backends=backends,
+        engine_ids=[spec.engine for spec in engine_specs],
     )
     router = _build_router(
-        config=config,
         config_path=config_path,
-        backends=backends,
+        engine_specs=engine_specs,
         default_engine=default_engine,
     )
 
+    ensure_plugins_ready(config=config, config_path=config_path)
     plugins = load_plugins(config=config, config_path=config_path, router=router)
 
     available_engines = [entry.engine for entry in router.available_entries]
@@ -289,7 +310,14 @@ def _run_auto_router(
     lock_handle: LockHandle | None = None
     try:
         default_engine = _default_engine_for_setup(default_engine_override)
-        backend = get_backend(default_engine)
+        try:
+            setup_config, setup_path = load_telegram_config()
+        except ConfigError:
+            setup_config = None
+            setup_path = None
+        backend = _backend_for_setup(
+            engine_id=default_engine, config=setup_config, config_path=setup_path
+        )
     except ConfigError as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(code=1)
@@ -300,13 +328,29 @@ def _run_auto_router(
         if not interactive_setup(force=True):
             raise typer.Exit(code=1)
         default_engine = _default_engine_for_setup(default_engine_override)
-        backend = get_backend(default_engine)
+        try:
+            setup_config, setup_path = load_telegram_config()
+        except ConfigError:
+            setup_config = None
+            setup_path = None
+        backend = _backend_for_setup(
+            engine_id=default_engine, config=setup_config, config_path=setup_path
+        )
     setup = check_setup(backend)
     if not setup.ok:
         if _setup_needs_config(setup) and _should_run_interactive():
             if interactive_setup(force=False):
                 default_engine = _default_engine_for_setup(default_engine_override)
-                backend = get_backend(default_engine)
+                try:
+                    setup_config, setup_path = load_telegram_config()
+                except ConfigError:
+                    setup_config = None
+                    setup_path = None
+                backend = _backend_for_setup(
+                    engine_id=default_engine,
+                    config=setup_config,
+                    config_path=setup_path,
+                )
                 setup = check_setup(backend)
         if not setup.ok:
             if _setup_needs_config(setup):
