@@ -1,20 +1,17 @@
 import anyio
 import pytest
 
-from pathlib import Path
-
-from takopi.commands import Command, CommandCatalog
 from takopi.telegram.bridge import (
     TelegramBridgeConfig,
     TelegramTransport,
-    _build_bot_commands,
+    _collect_telegram_commands,
     _handle_cancel,
     _is_cancel_command,
     _send_with_resume,
-    _strip_command,
     _strip_engine_command,
     run_main_loop,
 )
+from takopi.plugins import PluginManager, TelegramCommand
 from takopi.runner_bridge import ExecBridgeConfig, RunningTask
 from takopi.markdown import MarkdownPresenter
 from takopi.model import EngineId, ResumeToken
@@ -175,7 +172,9 @@ class _FakeBot:
 
 
 def _make_cfg(
-    transport: _FakeTransport, runner: ScriptRunner | None = None
+    transport: _FakeTransport,
+    runner: ScriptRunner | None = None,
+    plugins: PluginManager | None = None,
 ) -> TelegramBridgeConfig:
     if runner is None:
         runner = ScriptRunner([Return(answer="ok")], engine=CODEX_ENGINE)
@@ -190,6 +189,15 @@ def _make_cfg(
         chat_id=123,
         startup_msg="",
         exec_cfg=exec_cfg,
+        plugins=plugins or PluginManager.empty(),
+    )
+
+
+def _make_plugin_manager(*commands: TelegramCommand) -> PluginManager:
+    return PluginManager(
+        plugins=[],
+        message_preprocessors=[],
+        telegram_command_providers=[("test", lambda: list(commands))],
     )
 
 
@@ -231,15 +239,27 @@ def test_strip_engine_command_only_first_non_empty_line() -> None:
     assert text == "hello\n/claude hi"
 
 
-def test_build_bot_commands_includes_cancel_and_engine() -> None:
+def test_collect_telegram_commands_includes_core_and_engine() -> None:
     runner = ScriptRunner(
         [Return(answer="ok")], engine=CODEX_ENGINE, resume_value="sid"
     )
-    router = _make_router(runner)
-    commands = _build_bot_commands(router)
+    cfg = _make_cfg(_FakeTransport(), runner)
+    commands = _collect_telegram_commands(cfg)
 
-    assert {"command": "cancel", "description": "cancel run"} in commands
-    assert any(cmd["command"] == "codex" for cmd in commands)
+    command_names = [cmd.command for cmd in commands]
+    assert "help" in command_names
+    assert "cancel" in command_names
+    assert "codex" in command_names
+
+
+def test_collect_telegram_commands_includes_plugin_commands() -> None:
+    plugin_manager = _make_plugin_manager(
+        TelegramCommand(command="ping", description="ping takopi")
+    )
+    cfg = _make_cfg(_FakeTransport(), plugins=plugin_manager)
+    commands = _collect_telegram_commands(cfg)
+    command_names = [cmd.command for cmd in commands]
+    assert "ping" in command_names
 
 
 @pytest.mark.anyio
@@ -539,6 +559,7 @@ async def test_run_main_loop_routes_reply_to_running_resume() -> None:
         chat_id=123,
         startup_msg="",
         exec_cfg=exec_cfg,
+        plugins=PluginManager.empty(),
     )
 
     async def poller(_cfg: TelegramBridgeConfig):
@@ -579,140 +600,27 @@ async def test_run_main_loop_routes_reply_to_running_resume() -> None:
             tg.cancel_scope.cancel()
 
 
-# Tests for slash command support
-
-
-def _make_test_command(name: str, prompt: str = "Test prompt.") -> Command:
-    return Command(
-        name=name,
-        description=f"Test {name}",
-        prompt=prompt,
-        location=Path(f"/test/{name}.md"),
-        source="test",
+@pytest.mark.anyio
+async def test_help_command_replies_with_command_list() -> None:
+    transport = _FakeTransport()
+    plugin_manager = _make_plugin_manager(
+        TelegramCommand(command="ping", description="ping takopi")
     )
+    cfg = _make_cfg(transport, plugins=plugin_manager)
 
+    async def poller(_cfg: TelegramBridgeConfig):
+        yield {
+            "message_id": 1,
+            "text": "/help",
+            "chat": {"id": 123},
+            "from": {"id": 123},
+        }
 
-def _make_test_catalog(*names: str) -> CommandCatalog:
-    commands = [_make_test_command(name) for name in names]
-    return CommandCatalog.from_commands(commands)
+    await run_main_loop(cfg, poller)
 
-
-def test_strip_command_matches_command() -> None:
-    catalog = _make_test_catalog("review", "explain")
-    args, command = _strip_command("/review the code", commands=catalog)
-    assert command is not None
-    assert command.name == "review"
-    assert args == "the code"
-
-
-def test_strip_command_with_bot_suffix() -> None:
-    catalog = _make_test_catalog("review")
-    args, command = _strip_command("/review@mybot the code", commands=catalog)
-    assert command is not None
-    assert command.name == "review"
-    assert args == "the code"
-
-
-def test_strip_command_on_own_line() -> None:
-    catalog = _make_test_catalog("review")
-    args, command = _strip_command("/review\nthe code", commands=catalog)
-    assert command is not None
-    assert command.name == "review"
-    assert args == "the code"
-
-
-def test_strip_command_no_match() -> None:
-    catalog = _make_test_catalog("review")
-    args, command = _strip_command("/unknown the code", commands=catalog)
-    assert command is None
-    assert args == "/unknown the code"
-
-
-def test_strip_command_empty_catalog() -> None:
-    catalog = CommandCatalog.empty()
-    args, command = _strip_command("/review the code", commands=catalog)
-    assert command is None
-    assert args == "/review the code"
-
-
-def test_strip_command_empty_text() -> None:
-    catalog = _make_test_catalog("review")
-    args, command = _strip_command("", commands=catalog)
-    assert command is None
-    assert args == ""
-
-
-def test_strip_command_no_slash() -> None:
-    catalog = _make_test_catalog("review")
-    args, command = _strip_command("review the code", commands=catalog)
-    assert command is None
-    assert args == "review the code"
-
-
-def test_strip_command_normalizes_name() -> None:
-    catalog = _make_test_catalog("code_review")
-    args, command = _strip_command("/code-review file.py", commands=catalog)
-    assert command is not None
-    assert command.name == "code_review"
-
-
-def test_build_bot_commands_includes_custom_commands() -> None:
-    runner = ScriptRunner(
-        [Return(answer="ok")], engine=CODEX_ENGINE, resume_value="sid"
-    )
-    router = _make_router(runner)
-    catalog = _make_test_catalog("review", "explain")
-    commands = _build_bot_commands(router, commands=catalog)
-
-    command_names = [cmd["command"] for cmd in commands]
-    assert "review" in command_names
-    assert "explain" in command_names
-    assert "cancel" in command_names
-    assert "codex" in command_names
-
-
-def test_build_bot_commands_custom_commands_sorted() -> None:
-    runner = ScriptRunner([Return(answer="ok")], engine=CODEX_ENGINE)
-    router = _make_router(runner)
-    catalog = _make_test_catalog("zebra", "alpha", "beta")
-    commands = _build_bot_commands(router, commands=catalog)
-
-    # Custom commands should be sorted alphabetically
-    custom_commands = [
-        cmd["command"]
-        for cmd in commands
-        if cmd["command"] in ("zebra", "alpha", "beta")
-    ]
-    assert custom_commands == ["alpha", "beta", "zebra"]
-
-
-def test_build_bot_commands_skips_duplicates() -> None:
-    runner = ScriptRunner([Return(answer="ok")], engine=CODEX_ENGINE)
-    router = _make_router(runner)
-    # Create a command with the same name as the engine
-    catalog = _make_test_catalog("codex")
-    commands = _build_bot_commands(router, commands=catalog)
-
-    codex_commands = [cmd for cmd in commands if cmd["command"] == "codex"]
-    # Should only have one "codex" command (the engine one)
-    assert len(codex_commands) == 1
-
-
-def test_build_bot_commands_trims_descriptions() -> None:
-    runner = ScriptRunner([Return(answer="ok")], engine=CODEX_ENGINE)
-    router = _make_router(runner)
-
-    long_desc = "x" * 100
-    command = Command(
-        name="longdesc",
-        description=long_desc,
-        prompt="Test.",
-        location=Path("/test/longdesc.md"),
-        source="test",
-    )
-    catalog = CommandCatalog.from_commands([command])
-    commands = _build_bot_commands(router, commands=catalog)
-
-    longdesc_cmd = next(cmd for cmd in commands if cmd["command"] == "longdesc")
-    assert len(longdesc_cmd["description"]) <= 64
-    assert longdesc_cmd["description"].endswith("...")
+    assert transport.send_calls
+    help_text = transport.send_calls[-1]["message"].text
+    assert "/help" in help_text
+    assert "/cancel" in help_text
+    assert "/codex" in help_text
+    assert "/ping" in help_text

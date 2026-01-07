@@ -11,11 +11,11 @@ import typer
 
 from . import __version__
 from .backends import EngineBackend
-from .commands import load_commands_from_dirs, parse_command_dirs
 from .config import ConfigError
 from .engines import get_backend, get_engine_config, list_backends
 from .lockfile import LockError, LockHandle, acquire_lock, token_fingerprint
 from .logging import get_logger, setup_logging
+from .plugins import load_plugins
 from .telegram.bridge import (
     TelegramBridgeConfig,
     TelegramPresenter,
@@ -160,8 +160,9 @@ def _build_router(
                 continue
 
         cmd = backend.cli_cmd or backend.id
-        if shutil.which(cmd) is None:
-            issue = issue or f"{cmd} not found on PATH"
+        if backend.cli_cmd is not None or backend.install_cmd is not None:
+            if shutil.which(cmd) is None:
+                issue = issue or f"{cmd} not found on PATH"
 
         if issue and engine_id == default_engine:
             raise ConfigError(f"Default engine {engine_id!r} unavailable: {issue}")
@@ -210,15 +211,7 @@ def _parse_bridge_config(
         default_engine=default_engine,
     )
 
-    # Load slash commands from configured directories
-    command_dirs = parse_command_dirs(config)
-    commands = load_commands_from_dirs(command_dirs)
-    if commands.commands:
-        logger.info(
-            "commands.loaded",
-            count=len(commands.commands),
-            names=[c.name for c in commands.commands],
-        )
+    plugins = load_plugins(config=config, config_path=config_path, router=router)
 
     available_engines = [entry.engine for entry in router.available_entries]
     missing_engines = [entry.engine for entry in router.entries if not entry.available]
@@ -247,7 +240,7 @@ def _parse_bridge_config(
         chat_id=chat_id,
         startup_msg=startup_msg,
         exec_cfg=exec_cfg,
-        commands=commands,
+        plugins=plugins,
     )
 
 

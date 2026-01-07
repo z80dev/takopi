@@ -6,12 +6,7 @@ from typing import Any
 
 import anyio
 
-from ..commands import (
-    Command,
-    CommandCatalog,
-    build_command_prompt,
-    normalize_command,
-)
+from ..commands import normalize_command
 from ..runner_bridge import (
     ExecBridgeConfig,
     IncomingMessage,
@@ -23,6 +18,7 @@ from ..logging import bind_run_context, clear_context, get_logger
 from ..markdown import MarkdownFormatter, MarkdownParts
 from ..model import EngineId, ResumeToken
 from ..progress import ProgressState, ProgressTracker
+from ..plugins import PluginManager, TelegramCommand
 from ..router import AutoRouter, RunnerUnavailableError
 from ..runner import Runner
 from ..scheduler import ThreadJob, ThreadScheduler
@@ -39,6 +35,14 @@ def _is_cancel_command(text: str) -> bool:
         return False
     command = stripped.split(maxsplit=1)[0]
     return command == "/cancel" or command.startswith("/cancel@")
+
+
+def _is_help_command(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return False
+    command = stripped.split(maxsplit=1)[0]
+    return command == "/help" or command.startswith("/help@")
 
 
 def _strip_engine_command(
@@ -76,40 +80,6 @@ def _strip_engine_command(
     return "\n".join(lines).strip(), engine
 
 
-def _strip_command(
-    text: str, *, commands: CommandCatalog
-) -> tuple[str, Command | None]:
-    """Strip a slash command from the first non-empty line.
-
-    Returns the remaining text and the matched Command, or (original_text, None)
-    if no command matched.
-    """
-    if not text or not commands.by_command:
-        return text, None
-    lines = text.splitlines()
-    idx = next((i for i, line in enumerate(lines) if line.strip()), None)
-    if idx is None:
-        return text, None
-    line = lines[idx].lstrip()
-    if not line.startswith("/"):
-        return text, None
-    parts = line.split(maxsplit=1)
-    cmd_text = parts[0][1:]
-    if "@" in cmd_text:
-        cmd_text = cmd_text.split("@", 1)[0]
-    normalized = normalize_command(cmd_text)
-    command = commands.by_command.get(normalized)
-    if command is None:
-        return text, None
-    remainder = parts[1] if len(parts) > 1 else ""
-    if remainder:
-        lines[idx] = remainder
-    else:
-        lines.pop(idx)
-    args_text = "\n".join(lines).strip()
-    return args_text, command
-
-
 def _trim_command_description(text: str, *, limit: int = 64) -> str:
     """Trim a command description to fit Telegram's limit (64 chars)."""
     normalized = " ".join(text.split())
@@ -120,38 +90,81 @@ def _trim_command_description(text: str, *, limit: int = 64) -> str:
     return normalized[: limit - 3].rstrip() + "..."
 
 
-def _build_bot_commands(
-    router: AutoRouter,
-    *,
-    commands: CommandCatalog | None = None,
-) -> list[dict[str, str]]:
-    result: list[dict[str, str]] = []
+def _collect_telegram_commands(cfg: TelegramBridgeConfig) -> list[TelegramCommand]:
+    commands: list[TelegramCommand] = []
     seen: set[str] = set()
-    for entry in router.available_entries:
+
+    def add(cmd: TelegramCommand) -> None:
+        normalized = normalize_command(cmd.command)
+        if not normalized:
+            return
+        if normalized in seen:
+            return
+        commands.append(
+            TelegramCommand(
+                command=normalized,
+                description=cmd.description,
+                help=cmd.help,
+                sort_key=cmd.sort_key,
+            )
+        )
+        seen.add(normalized)
+
+    add(
+        TelegramCommand(
+            command="help",
+            description="show help",
+            help="show help",
+        )
+    )
+    add(
+        TelegramCommand(
+            command="cancel",
+            description="cancel run",
+            help="cancel run",
+        )
+    )
+
+    for entry in cfg.router.available_entries:
         cmd = entry.engine.lower()
-        if cmd in seen:
+        add(TelegramCommand(command=cmd, description=f"start {cmd}", help=f"start {cmd}"))
+
+    for plugin_id, cmd in cfg.plugins.iter_telegram_commands():
+        normalized = normalize_command(cmd.command)
+        if not normalized:
             continue
-        result.append({"command": cmd, "description": f"start {cmd}"})
-        seen.add(cmd)
-    if "cancel" not in seen:
-        result.append({"command": "cancel", "description": "cancel run"})
-    if commands is not None:
-        for command in sorted(commands.commands, key=lambda c: c.name.lower()):
-            cmd = normalize_command(command.name)
-            if not cmd or cmd in seen:
-                continue
-            description = _trim_command_description(command.description)
-            result.append({"command": cmd, "description": description})
-            seen.add(cmd)
-    return result
+        if normalized in {"help", "cancel"}:
+            logger.warning(
+                "plugins.command_reserved",
+                plugin_id=plugin_id,
+                command=normalized,
+            )
+            continue
+        if normalized in seen:
+            logger.warning(
+                "plugins.command_conflict",
+                plugin_id=plugin_id,
+                command=normalized,
+            )
+            continue
+        add(cmd)
+
+    return commands
 
 
 async def _set_command_menu(cfg: TelegramBridgeConfig) -> None:
-    commands = _build_bot_commands(cfg.router, commands=cfg.commands)
-    if not commands:
+    commands = _collect_telegram_commands(cfg)
+    payload = [
+        {
+            "command": cmd.command,
+            "description": _trim_command_description(cmd.description),
+        }
+        for cmd in commands
+    ]
+    if not payload:
         return
     try:
-        ok = await cfg.bot.set_my_commands(commands)
+        ok = await cfg.bot.set_my_commands(payload)
     except Exception as exc:
         logger.info(
             "startup.command_menu.failed",
@@ -164,7 +177,7 @@ async def _set_command_menu(cfg: TelegramBridgeConfig) -> None:
         return
     logger.info(
         "startup.command_menu.updated",
-        commands=[cmd["command"] for cmd in commands],
+        commands=[cmd["command"] for cmd in payload],
     )
 
 
@@ -294,7 +307,7 @@ class TelegramBridgeConfig:
     chat_id: int
     startup_msg: str
     exec_cfg: ExecBridgeConfig
-    commands: CommandCatalog = field(default_factory=CommandCatalog.empty)
+    plugins: PluginManager = field(default_factory=PluginManager.empty)
 
 
 async def _send_plain(
@@ -310,6 +323,31 @@ async def _send_plain(
         channel_id=chat_id,
         message=RenderedMessage(text=text),
         options=SendOptions(reply_to=reply_to, notify=notify),
+    )
+
+
+def _render_help_text(commands: list[TelegramCommand]) -> str:
+    lines = ["available commands:"]
+    for cmd in commands:
+        desc = cmd.help or cmd.description
+        desc = " ".join(desc.split())
+        if desc:
+            lines.append(f"/{cmd.command} - {desc}")
+        else:
+            lines.append(f"/{cmd.command}")
+    return "\n".join(lines)
+
+
+async def _handle_help(cfg: TelegramBridgeConfig, msg: dict[str, Any]) -> None:
+    chat_id = msg["chat"]["id"]
+    user_msg_id = msg["message_id"]
+    commands = _collect_telegram_commands(cfg)
+    text = _render_help_text(commands)
+    await _send_plain(
+        cfg.exec_cfg.transport,
+        chat_id=chat_id,
+        user_msg_id=user_msg_id,
+        text=text,
     )
 
 
@@ -589,18 +627,20 @@ async def run_main_loop(
                 if _is_cancel_command(text):
                     tg.start_soon(_handle_cancel, cfg, msg, running_tasks)
                     continue
+                if _is_help_command(text):
+                    tg.start_soon(_handle_help, cfg, msg)
+                    continue
 
                 text, engine_override = _strip_engine_command(
                     text, engine_ids=cfg.router.engine_ids
                 )
 
-                # Check for custom slash commands
-                args_text, matched_command = _strip_command(text, commands=cfg.commands)
-                if matched_command is not None:
-                    text = build_command_prompt(matched_command, args_text)
-                    # Use command's runner if specified and no explicit engine override
-                    if engine_override is None and matched_command.runner:
-                        engine_override = matched_command.runner
+                text, engine_override = await cfg.plugins.preprocess_message(
+                    text=text,
+                    engine_override=engine_override,
+                    reply_text=(msg.get("reply_to_message") or {}).get("text"),
+                    meta={"telegram_message": msg},
+                )
 
                 r = msg.get("reply_to_message") or {}
                 resume_token = cfg.router.resolve_resume(text, r.get("text"))
