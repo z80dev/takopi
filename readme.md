@@ -114,6 +114,8 @@ send a message to the bot.
 
 start a new thread with a specific engine by prefixing your message with `/codex`, `/claude`, `/opencode`, or `/pi`.
 
+change the default engine for new threads with `/default <engine>`, or run `/default` to see the current one.
+
 to continue a thread, reply to a bot message containing a resume line.
 you can also copy it to resume an interactive session in your terminal.
 

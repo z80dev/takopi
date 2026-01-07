@@ -272,6 +272,8 @@ def _parse_bridge_config(
         chat_id=chat_id,
         startup_msg=startup_msg,
         exec_cfg=exec_cfg,
+        config=config,
+        config_path=config_path,
         plugins=plugins,
     )
 

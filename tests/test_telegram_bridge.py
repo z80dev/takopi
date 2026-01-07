@@ -231,6 +231,14 @@ def test_strip_engine_command_bot_suffix() -> None:
     assert text == "hi"
 
 
+def test_strip_engine_command_normalizes() -> None:
+    text, engine = _strip_engine_command(
+        "/opencode_opus hi", engine_ids=("opencode-opus",)
+    )
+    assert engine == "opencode-opus"
+    assert text == "hi"
+
+
 def test_strip_engine_command_only_first_non_empty_line() -> None:
     text, engine = _strip_engine_command(
         "hello\n/claude hi", engine_ids=("codex", "claude")

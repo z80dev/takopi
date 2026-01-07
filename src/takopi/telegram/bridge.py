@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import anyio
@@ -14,6 +15,7 @@ from ..runner_bridge import (
     RunningTasks,
     handle_message,
 )
+from ..config import ConfigError
 from ..logging import bind_run_context, clear_context, get_logger
 from ..markdown import MarkdownFormatter, MarkdownParts
 from ..model import EngineId, ResumeToken
@@ -24,6 +26,7 @@ from ..runner import Runner
 from ..scheduler import ThreadJob, ThreadScheduler
 from ..transport import MessageRef, RenderedMessage, SendOptions, Transport
 from .client import BotClient
+from .config import update_default_engine
 from .render import prepare_telegram
 
 logger = get_logger(__name__)
@@ -57,6 +60,19 @@ def _is_help_command(text: str) -> bool:
     return command == "/help" or command.startswith("/help@")
 
 
+def _parse_default_command(text: str) -> str | None:
+    stripped = text.strip()
+    if not stripped:
+        return None
+    parts = stripped.split(maxsplit=1)
+    command = parts[0]
+    if command != "/default" and not command.startswith("/default@"):
+        return None
+    if len(parts) < 2:
+        return ""
+    return parts[1].strip()
+
+
 def _strip_engine_command(
     text: str, *, engine_ids: tuple[EngineId, ...]
 ) -> tuple[str, EngineId | None]:
@@ -66,7 +82,12 @@ def _strip_engine_command(
     if not engine_ids:
         return text, None
 
-    engine_map = {engine.lower(): engine for engine in engine_ids}
+    engine_map: dict[str, EngineId] = {}
+    for engine in engine_ids:
+        normalized = normalize_command(engine)
+        if not normalized:
+            continue
+        engine_map.setdefault(normalized, engine)
     lines = text.splitlines()
     idx = next((i for i, line in enumerate(lines) if line.strip()), None)
     if idx is None:
@@ -80,7 +101,8 @@ def _strip_engine_command(
     command = parts[0][1:]
     if "@" in command:
         command = command.split("@", 1)[0]
-    engine = engine_map.get(command.lower())
+    normalized = normalize_command(command)
+    engine = engine_map.get(normalized)
     if engine is None:
         return text, None
 
@@ -134,6 +156,13 @@ def _collect_telegram_commands(cfg: TelegramBridgeConfig) -> list[TelegramComman
             command="cancel",
             description="cancel run",
             help="cancel run",
+        )
+    )
+    add(
+        TelegramCommand(
+            command="default",
+            description="show or set default engine",
+            help="show or set default engine",
         )
     )
 
@@ -201,6 +230,14 @@ def _collect_help_sections(
             command="cancel",
             description="cancel run",
             help="cancel run",
+        ),
+        core,
+    )
+    add(
+        TelegramCommand(
+            command="default",
+            description="show or set default engine",
+            help="show or set default engine",
         ),
         core,
     )
@@ -391,6 +428,8 @@ class TelegramBridgeConfig:
     chat_id: int
     startup_msg: str
     exec_cfg: ExecBridgeConfig
+    config: dict[str, Any]
+    config_path: Path
     plugins: PluginManager = field(default_factory=PluginManager.empty)
 
 
@@ -441,6 +480,72 @@ async def _handle_help(cfg: TelegramBridgeConfig, msg: dict[str, Any]) -> None:
         chat_id=chat_id,
         user_msg_id=user_msg_id,
         text=text,
+    )
+
+
+async def _handle_default(cfg: TelegramBridgeConfig, msg: dict[str, Any]) -> None:
+    chat_id = msg["chat"]["id"]
+    user_msg_id = msg["message_id"]
+    text = msg["text"]
+    requested = _parse_default_command(text)
+    if requested is None:
+        return
+
+    available_entries = cfg.router.available_entries
+    available_ids = [entry.engine for entry in available_entries]
+    engine_map = {engine.lower(): engine for engine in available_ids}
+
+    if not requested:
+        available_list = ", ".join(available_ids) if available_ids else "none"
+        await _send_plain(
+            cfg.exec_cfg.transport,
+            chat_id=chat_id,
+            user_msg_id=user_msg_id,
+            text=(
+                f"default engine: {cfg.router.default_engine}\n"
+                f"available engines: {available_list}"
+            ),
+        )
+        return
+
+    engine = engine_map.get(requested.lower())
+    if engine is None:
+        available_list = ", ".join(available_ids) if available_ids else "none"
+        await _send_plain(
+            cfg.exec_cfg.transport,
+            chat_id=chat_id,
+            user_msg_id=user_msg_id,
+            text=f"unknown engine {requested!r}. available: {available_list}",
+        )
+        return
+
+    if engine == cfg.router.default_engine:
+        await _send_plain(
+            cfg.exec_cfg.transport,
+            chat_id=chat_id,
+            user_msg_id=user_msg_id,
+            text=f"default engine is already {engine}.",
+        )
+        return
+
+    try:
+        update_default_engine(cfg.config_path, engine)
+    except ConfigError as exc:
+        await _send_plain(
+            cfg.exec_cfg.transport,
+            chat_id=chat_id,
+            user_msg_id=user_msg_id,
+            text=f"error updating config: {exc}",
+        )
+        return
+
+    cfg.router.default_engine = engine
+    cfg.config["default_engine"] = engine
+    await _send_plain(
+        cfg.exec_cfg.transport,
+        chat_id=chat_id,
+        user_msg_id=user_msg_id,
+        text=f"default engine set to {engine}.",
     )
 
 
@@ -722,6 +827,9 @@ async def run_main_loop(
                     continue
                 if _is_help_command(text):
                     tg.start_soon(_handle_help, cfg, msg)
+                    continue
+                if _parse_default_command(text) is not None:
+                    tg.start_soon(_handle_default, cfg, msg)
                     continue
 
                 text, engine_override = _strip_engine_command(
