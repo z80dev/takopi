@@ -152,6 +152,78 @@ def _collect_telegram_commands(cfg: TelegramBridgeConfig) -> list[TelegramComman
     return commands
 
 
+def _collect_help_sections(
+    cfg: TelegramBridgeConfig,
+) -> tuple[list[TelegramCommand], list[TelegramCommand], dict[str, list[TelegramCommand]]]:
+    core: list[TelegramCommand] = []
+    engines: list[TelegramCommand] = []
+    plugins: dict[str, list[TelegramCommand]] = {}
+    seen: set[str] = set()
+
+    def add(cmd: TelegramCommand, bucket: list[TelegramCommand]) -> None:
+        normalized = normalize_command(cmd.command)
+        if not normalized:
+            return
+        if normalized in seen:
+            return
+        bucket.append(
+            TelegramCommand(
+                command=normalized,
+                description=cmd.description,
+                help=cmd.help,
+                sort_key=cmd.sort_key,
+            )
+        )
+        seen.add(normalized)
+
+    add(
+        TelegramCommand(
+            command="help",
+            description="show help",
+            help="show help",
+        ),
+        core,
+    )
+    add(
+        TelegramCommand(
+            command="cancel",
+            description="cancel run",
+            help="cancel run",
+        ),
+        core,
+    )
+
+    for entry in cfg.router.available_entries:
+        cmd = entry.engine.lower()
+        add(
+            TelegramCommand(command=cmd, description=f"start {cmd}", help=f"start {cmd}"),
+            engines,
+        )
+
+    for plugin_id, cmd in cfg.plugins.iter_telegram_commands():
+        normalized = normalize_command(cmd.command)
+        if not normalized:
+            continue
+        if normalized in {"help", "cancel"}:
+            logger.warning(
+                "plugins.command_reserved",
+                plugin_id=plugin_id,
+                command=normalized,
+            )
+            continue
+        if normalized in seen:
+            logger.warning(
+                "plugins.command_conflict",
+                plugin_id=plugin_id,
+                command=normalized,
+            )
+            continue
+        bucket = plugins.setdefault(plugin_id, [])
+        add(cmd, bucket)
+
+    return core, engines, plugins
+
+
 async def _set_command_menu(cfg: TelegramBridgeConfig) -> None:
     commands = _collect_telegram_commands(cfg)
     payload = [
@@ -326,8 +398,13 @@ async def _send_plain(
     )
 
 
-def _render_help_text(commands: list[TelegramCommand]) -> str:
-    lines = ["available commands:"]
+def _append_help_section(
+    lines: list[str], title: str, commands: list[TelegramCommand]
+) -> None:
+    if not commands:
+        return
+    lines.append("")
+    lines.append(f"{title}:")
     for cmd in commands:
         desc = cmd.help or cmd.description
         desc = " ".join(desc.split())
@@ -335,14 +412,18 @@ def _render_help_text(commands: list[TelegramCommand]) -> str:
             lines.append(f"/{cmd.command} - {desc}")
         else:
             lines.append(f"/{cmd.command}")
-    return "\n".join(lines)
 
 
 async def _handle_help(cfg: TelegramBridgeConfig, msg: dict[str, Any]) -> None:
     chat_id = msg["chat"]["id"]
     user_msg_id = msg["message_id"]
-    commands = _collect_telegram_commands(cfg)
-    text = _render_help_text(commands)
+    core, engines, plugins = _collect_help_sections(cfg)
+    lines = ["available commands:"]
+    _append_help_section(lines, "core", core)
+    _append_help_section(lines, "engines", engines)
+    for plugin_id, cmds in plugins.items():
+        _append_help_section(lines, f"plugin {plugin_id}", cmds)
+    text = "\n".join(lines)
     await _send_plain(
         cfg.exec_cfg.transport,
         chat_id=chat_id,

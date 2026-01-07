@@ -308,6 +308,7 @@ def load_plugins(
 class _LoadedPlugin:
     plugin_id: str
     plugin: TakopiPlugin
+    source: str  # "builtin" or "entry_point"
 
 
 class PluginManager:
@@ -391,7 +392,9 @@ class PluginManager:
                     error_type=exc.__class__.__name__,
                 )
                 continue
-            loaded.append(_LoadedPlugin(plugin_id=plugin_id, plugin=plugin))
+            loaded.append(_LoadedPlugin(
+                plugin_id=plugin_id, plugin=plugin, source=plugin_def.source
+            ))
         return cls(
             plugins=loaded,
             message_preprocessors=message_preprocessors,
@@ -400,6 +403,12 @@ class PluginManager:
 
     def plugin_ids(self) -> tuple[str, ...]:
         return tuple(plugin.plugin_id for plugin in self._plugins)
+
+    def builtin_plugin_ids(self) -> tuple[str, ...]:
+        return tuple(p.plugin_id for p in self._plugins if p.source == "builtin")
+
+    def external_plugin_ids(self) -> tuple[str, ...]:
+        return tuple(p.plugin_id for p in self._plugins if p.source != "builtin")
 
     async def preprocess_message(
         self,
