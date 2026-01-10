@@ -1,5 +1,17 @@
 # changelog
 
+## v0.14.0 (2026-01-10)
+
+### changes
+
+- add telegram forum topics support with `/topic` command for binding threads to projects/branches, persistent resume tokens per topic, and `/ctx` for inspecting or updating bindings [#80](https://github.com/banteg/takopi/pull/80)
+- add inline cancel button to progress messages [#79](https://github.com/banteg/takopi/pull/79)
+- add config hot-reload via watchfiles [#78](https://github.com/banteg/takopi/pull/78)
+
+### docs
+
+- add user guide and telegram topics documentation [#80](https://github.com/banteg/takopi/pull/80)
+
 ## v0.13.0 (2026-01-09)
 
 ### changes

@@ -52,6 +52,8 @@ to re-run onboarding (and overwrite config), use `takopi --onboard`.
 
 run your agent cli once interactively in the repo to trust the directory.
 
+see [`docs/user-guide.md`](docs/user-guide.md) for detailed configuration and usage.
+
 ## config
 
 global config `~/.takopi/takopi.toml`
