@@ -155,15 +155,12 @@ def _tool_result_event(
     normalized = _normalize_tool_result(raw_result)
     preview = normalized
 
-    detail = dict(action.detail)
-    detail.update(
-        {
-            "tool_use_id": content.tool_use_id,
-            "result_preview": preview,
-            "result_len": len(normalized),
-            "is_error": is_error,
-        }
-    )
+    detail = action.detail | {
+        "tool_use_id": content.tool_use_id,
+        "result_preview": preview,
+        "result_len": len(normalized),
+        "is_error": is_error,
+    }
     return factory.action_completed(
         action_id=action.id,
         kind=action.kind,
@@ -367,7 +364,6 @@ class ClaudeRunner(ResumeTokenMixin, JsonlSubprocessRunner):
         *,
         state: Any,
     ) -> list[str]:
-        _ = state
         return self._build_args(prompt, resume)
 
     def stdin_payload(
@@ -377,11 +373,9 @@ class ClaudeRunner(ResumeTokenMixin, JsonlSubprocessRunner):
         *,
         state: Any,
     ) -> bytes | None:
-        _ = prompt, resume, state
         return None
 
     def env(self, *, state: Any) -> dict[str, str] | None:
-        _ = state
         if self.use_api_billing is not True:
             env = dict(os.environ)
             env.pop("ANTHROPIC_API_KEY", None)
@@ -389,7 +383,6 @@ class ClaudeRunner(ResumeTokenMixin, JsonlSubprocessRunner):
         return None
 
     def new_state(self, prompt: str, resume: ResumeToken | None) -> ClaudeStreamState:
-        _ = prompt, resume
         return ClaudeStreamState()
 
     def start_run(
@@ -399,7 +392,7 @@ class ClaudeRunner(ResumeTokenMixin, JsonlSubprocessRunner):
         *,
         state: ClaudeStreamState,
     ) -> None:
-        _ = state, prompt, resume
+        pass
 
     def decode_jsonl(
         self,
@@ -416,7 +409,6 @@ class ClaudeRunner(ResumeTokenMixin, JsonlSubprocessRunner):
         error: Exception,
         state: ClaudeStreamState,
     ) -> list[TakopiEvent]:
-        _ = raw, line, state
         if isinstance(error, msgspec.DecodeError):
             self.get_logger().warning(
                 "jsonl.msgspec.invalid",
@@ -439,7 +431,6 @@ class ClaudeRunner(ResumeTokenMixin, JsonlSubprocessRunner):
         line: str,
         state: ClaudeStreamState,
     ) -> list[TakopiEvent]:
-        _ = raw, line, state
         return []
 
     def translate(
@@ -450,7 +441,6 @@ class ClaudeRunner(ResumeTokenMixin, JsonlSubprocessRunner):
         resume: ResumeToken | None,
         found_session: ResumeToken | None,
     ) -> list[TakopiEvent]:
-        _ = resume, found_session
         return translate_claude_event(
             data,
             title=self.session_title,

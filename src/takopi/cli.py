@@ -12,6 +12,7 @@ from . import __version__
 from .config import ConfigError, load_or_init_config, write_config
 from .config_migrations import migrate_config
 from .commands import get_command
+from .backends import EngineBackend
 from .engines import get_backend, list_backend_ids
 from .ids import RESERVED_COMMAND_IDS, RESERVED_ENGINE_IDS
 from .lockfile import LockError, LockHandle, acquire_lock, token_fingerprint
@@ -108,6 +109,26 @@ def _default_engine_for_setup(
     return value
 
 
+def _resolve_setup_engine(
+    default_engine_override: str | None,
+) -> tuple[
+    TakopiSettings | None,
+    Path | None,
+    list[str] | None,
+    str,
+    EngineBackend,
+]:
+    settings_hint, config_hint = _load_settings_optional()
+    allowlist = resolve_plugins_allowlist(settings_hint)
+    default_engine = _default_engine_for_setup(
+        default_engine_override,
+        settings=settings_hint,
+        config_path=config_hint,
+    )
+    engine_backend = get_backend(default_engine, allowlist=allowlist)
+    return settings_hint, config_hint, allowlist, default_engine, engine_backend
+
+
 def _config_path_display(path: Path) -> str:
     home = Path.home()
     try:
@@ -148,33 +169,31 @@ def _run_auto_router(
     setup_logging(debug=debug)
     lock_handle: LockHandle | None = None
     try:
-        settings_hint, config_hint = _load_settings_optional()
-        allowlist = resolve_plugins_allowlist(settings_hint)
-        default_engine = _default_engine_for_setup(
-            default_engine_override,
-            settings=settings_hint,
-            config_path=config_hint,
-        )
-        engine_backend = get_backend(default_engine, allowlist=allowlist)
+        (
+            settings_hint,
+            config_hint,
+            allowlist,
+            default_engine,
+            engine_backend,
+        ) = _resolve_setup_engine(default_engine_override)
         transport_id = _resolve_transport_id(transport_override)
         transport_backend = get_transport(transport_id, allowlist=allowlist)
     except ConfigError as e:
         typer.echo(f"error: {e}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from e
     if onboard:
         if not _should_run_interactive():
             typer.echo("error: --onboard requires a TTY", err=True)
             raise typer.Exit(code=1)
         if not transport_backend.interactive_setup(force=True):
             raise typer.Exit(code=1)
-        settings_hint, config_hint = _load_settings_optional()
-        allowlist = resolve_plugins_allowlist(settings_hint)
-        default_engine = _default_engine_for_setup(
-            default_engine_override,
-            settings=settings_hint,
-            config_path=config_hint,
-        )
-        engine_backend = get_backend(default_engine, allowlist=allowlist)
+        (
+            settings_hint,
+            config_hint,
+            allowlist,
+            default_engine,
+            engine_backend,
+        ) = _resolve_setup_engine(default_engine_override)
     setup = transport_backend.check_setup(
         engine_backend,
         transport_override=transport_override,
@@ -189,27 +208,25 @@ def _run_auto_router(
                     default=False,
                 )
                 if run_onboard and transport_backend.interactive_setup(force=True):
-                    settings_hint, config_hint = _load_settings_optional()
-                    allowlist = resolve_plugins_allowlist(settings_hint)
-                    default_engine = _default_engine_for_setup(
-                        default_engine_override,
-                        settings=settings_hint,
-                        config_path=config_hint,
-                    )
-                    engine_backend = get_backend(default_engine, allowlist=allowlist)
+                    (
+                        settings_hint,
+                        config_hint,
+                        allowlist,
+                        default_engine,
+                        engine_backend,
+                    ) = _resolve_setup_engine(default_engine_override)
                     setup = transport_backend.check_setup(
                         engine_backend,
                         transport_override=transport_override,
                     )
             elif transport_backend.interactive_setup(force=False):
-                settings_hint, config_hint = _load_settings_optional()
-                allowlist = resolve_plugins_allowlist(settings_hint)
-                default_engine = _default_engine_for_setup(
-                    default_engine_override,
-                    settings=settings_hint,
-                    config_path=config_hint,
-                )
-                engine_backend = get_backend(default_engine, allowlist=allowlist)
+                (
+                    settings_hint,
+                    config_hint,
+                    allowlist,
+                    default_engine,
+                    engine_backend,
+                ) = _resolve_setup_engine(default_engine_override)
                 setup = transport_backend.check_setup(
                     engine_backend,
                     transport_override=transport_override,
@@ -252,10 +269,10 @@ def _run_auto_router(
         )
     except ConfigError as e:
         typer.echo(f"error: {e}", err=True)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from e
     except KeyboardInterrupt:
         logger.info("shutdown.interrupted")
-        raise typer.Exit(code=130)
+        raise typer.Exit(code=130) from None
     finally:
         if lock_handle is not None:
             lock_handle.release()
@@ -279,8 +296,7 @@ def _default_alias_from_path(path: Path) -> str | None:
     name = path.name
     if not name:
         return None
-    if name.endswith(".git"):
-        name = name[: -len(".git")]
+    name = name.removesuffix(".git")
     return name or None
 
 
