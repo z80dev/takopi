@@ -127,6 +127,7 @@ class _FakeBot(BotClient):
         self.edit_calls: list[dict] = []
         self.edit_topic_calls: list[dict[str, Any]] = []
         self.delete_calls: list[dict] = []
+        self.delete_topic_calls: list[tuple[int, int]] = []
 
     async def get_updates(
         self,
@@ -269,6 +270,12 @@ class _FakeBot(BotClient):
                 "name": name,
             }
         )
+        return True
+
+    async def delete_forum_topic(
+        self, chat_id: int, message_thread_id: int
+    ) -> bool:
+        self.delete_topic_calls.append((chat_id, message_thread_id))
         return True
 
     async def close(self) -> None:
@@ -693,6 +700,12 @@ async def test_telegram_transport_edit_wait_false_returns_ref() -> None:
             chat_id: int,
             message_id: int,
         ) -> bool:
+            return False
+
+        async def delete_forum_topic(
+            self, chat_id: int, message_thread_id: int
+        ) -> bool:
+            _ = chat_id, message_thread_id
             return False
 
         async def set_my_commands(

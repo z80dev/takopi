@@ -126,6 +126,12 @@ class BotClient(Protocol):
         name: str,
     ) -> bool: ...
 
+    async def delete_forum_topic(
+        self,
+        chat_id: int,
+        message_thread_id: int,
+    ) -> bool: ...
+
 
 class HttpBotClient:
     def __init__(
@@ -532,6 +538,20 @@ class HttpBotClient:
                 "chat_id": chat_id,
                 "message_thread_id": message_thread_id,
                 "name": name,
+            },
+        )
+        return bool(result)
+
+    async def delete_forum_topic(
+        self,
+        chat_id: int,
+        message_thread_id: int,
+    ) -> bool:
+        result = await self._post(
+            "deleteForumTopic",
+            {
+                "chat_id": chat_id,
+                "message_thread_id": message_thread_id,
             },
         )
         return bool(result)

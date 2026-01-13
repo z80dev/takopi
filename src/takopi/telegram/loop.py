@@ -30,6 +30,7 @@ from .commands.file_transfer import (
     _handle_file_put_default,
     _save_file_put,
 )
+from .commands.kill import KILL_CALLBACK_PREFIX, _handle_kill_command, handle_kill_callback
 from .commands.media import _handle_media_group
 from .commands.menu import _reserved_commands, _set_command_menu
 from .commands.parse import _parse_slash_command, is_cancel_command
@@ -161,6 +162,14 @@ def _dispatch_builtin_command(
                     cfg,
                     msg,
                     args_text,
+                    topic_store,
+                    resolved_scope=resolved_scope,
+                    scope_chat_ids=scope_chat_ids,
+                ),
+                "kill": partial(
+                    _handle_kill_command,
+                    cfg,
+                    msg,
                     topic_store,
                     resolved_scope=resolved_scope,
                     scope_chat_ids=scope_chat_ids,
@@ -736,6 +745,10 @@ async def run_main_loop(
                 if isinstance(msg, TelegramCallbackQuery):
                     if msg.data == CANCEL_CALLBACK_DATA:
                         tg.start_soon(handle_callback_cancel, cfg, msg, running_tasks)
+                    elif msg.data is not None and msg.data.startswith(
+                        KILL_CALLBACK_PREFIX
+                    ):
+                        tg.start_soon(handle_kill_callback, cfg, msg, topic_store)
                     else:
                         tg.start_soon(
                             cfg.bot.answer_callback_query,

@@ -246,7 +246,7 @@ def _run_auto_router(
             settings=settings,
             config_path=config_path,
             default_engine_override=default_engine_override,
-            reserved=("cancel",),
+            reserved=("cancel", "kill"),
         )
         if settings.transport == "telegram":
             transport_config = settings.transports.telegram
@@ -335,7 +335,7 @@ def init(
     projects_cfg = settings.to_projects_config(
         config_path=config_path,
         engine_ids=engine_ids,
-        reserved=("cancel",),
+        reserved=("cancel", "kill"),
     )
 
     alias_key = alias.lower()
@@ -343,7 +343,7 @@ def init(
         raise ConfigError(
             f"Invalid project alias {alias!r}; aliases must not match engine ids."
         )
-    if alias_key == "cancel":
+    if alias_key in {"cancel", "kill"}:
         raise ConfigError(
             f"Invalid project alias {alias!r}; aliases must not match reserved commands."
         )

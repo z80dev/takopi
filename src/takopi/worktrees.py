@@ -133,3 +133,47 @@ def _ensure_within_root(root: Path, path: Path) -> None:
     path_resolved = path.resolve(strict=False)
     if not path_resolved.is_relative_to(root_resolved):
         raise WorktreeError("branch path escapes the worktrees directory")
+
+
+def resolve_existing_worktree(project: ProjectConfig, branch: str) -> Path | None:
+    root = project.path
+    if not root.exists():
+        raise WorktreeError(f"project path not found: {root}")
+    branch = _sanitize_branch(branch)
+    worktrees_root = project.worktrees_root
+    worktree_path = worktrees_root / branch
+    _ensure_within_root(worktrees_root, worktree_path)
+    if not worktree_path.exists():
+        return None
+    if not git_is_worktree(worktree_path):
+        raise WorktreeError(f"{worktree_path} exists but is not a git worktree")
+    return worktree_path
+
+
+def worktree_change_count(path: Path) -> int:
+    result = git_run(["status", "--porcelain"], cwd=path)
+    if result is None:
+        raise WorktreeError("git not available on PATH")
+    if result.returncode != 0:
+        message = result.stderr.strip() or result.stdout.strip()
+        raise WorktreeError(message or "git status failed")
+    return sum(1 for line in result.stdout.splitlines() if line.strip())
+
+
+def remove_worktree(
+    project: ProjectConfig, branch: str, *, force: bool = False
+) -> Path | None:
+    worktree_path = resolve_existing_worktree(project, branch)
+    if worktree_path is None:
+        return None
+    args = ["worktree", "remove"]
+    if force:
+        args.append("--force")
+    args.append(str(worktree_path))
+    result = git_run(args, cwd=project.path)
+    if result is None:
+        raise WorktreeError("git not available on PATH")
+    if result.returncode != 0:
+        message = result.stderr.strip() or result.stdout.strip()
+        raise WorktreeError(message or "git worktree remove failed")
+    return worktree_path

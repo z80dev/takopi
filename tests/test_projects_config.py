@@ -19,7 +19,7 @@ def test_parse_projects_rejects_engine_alias() -> None:
         settings.to_projects_config(
             config_path=Path("takopi.toml"),
             engine_ids=["codex"],
-            reserved=("cancel",),
+            reserved=("cancel", "kill"),
         )
 
 
@@ -30,7 +30,7 @@ def test_parse_projects_default_project_must_exist() -> None:
         settings.to_projects_config(
             config_path=Path("takopi.toml"),
             engine_ids=["codex"],
-            reserved=("cancel",),
+            reserved=("cancel", "kill"),
         )
 
 
@@ -94,7 +94,7 @@ def test_projects_default_engine_unknown() -> None:
         settings.to_projects_config(
             config_path=Path("takopi.toml"),
             engine_ids=["codex"],
-            reserved=("cancel",),
+            reserved=("cancel", "kill"),
         )
 
 
@@ -108,7 +108,7 @@ def test_projects_chat_id_cannot_match_transport_chat_id() -> None:
         settings.to_projects_config(
             config_path=Path("takopi.toml"),
             engine_ids=["codex"],
-            reserved=("cancel",),
+            reserved=("cancel", "kill"),
         )
 
 
@@ -125,7 +125,7 @@ def test_projects_chat_id_must_be_unique() -> None:
         settings.to_projects_config(
             config_path=Path("takopi.toml"),
             engine_ids=["codex"],
-            reserved=("cancel",),
+            reserved=("cancel", "kill"),
         )
 
 
@@ -137,6 +137,6 @@ def test_projects_relative_path_resolves(tmp_path: Path) -> None:
     projects = settings.to_projects_config(
         config_path=config_path,
         engine_ids=["codex"],
-        reserved=("cancel",),
+        reserved=("cancel", "kill"),
     )
     assert projects.projects["z80"].path == config_path.parent / "repo"

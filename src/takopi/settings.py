@@ -203,7 +203,7 @@ class TakopiSettings(BaseSettings):
         *,
         config_path: Path,
         engine_ids: Iterable[str],
-        reserved: Iterable[str] = ("cancel",),
+        reserved: Iterable[str] = ("cancel", "kill"),
     ) -> ProjectsConfig:
         default_project = self.default_project
         default_chat_id = self.transports.telegram.chat_id

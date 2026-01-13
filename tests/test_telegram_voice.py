@@ -114,6 +114,12 @@ class _Bot(BotClient):
         _ = chat_id, message_id
         raise AssertionError("delete_message should not be called")
 
+    async def delete_forum_topic(
+        self, chat_id: int, message_thread_id: int
+    ) -> bool:
+        _ = chat_id, message_thread_id
+        raise AssertionError("delete_forum_topic should not be called")
+
     async def set_my_commands(
         self,
         commands: list[dict],

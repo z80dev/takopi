@@ -407,3 +407,24 @@ class TelegramClient:
                 chat_id=chat_id,
             )
         )
+
+    async def delete_forum_topic(
+        self,
+        chat_id: int,
+        message_thread_id: int,
+    ) -> bool:
+        async def execute() -> bool:
+            return await self._client.delete_forum_topic(
+                chat_id,
+                message_thread_id,
+            )
+
+        return bool(
+            await self.enqueue_op(
+                key=self.unique_key("delete_forum_topic"),
+                label="delete_forum_topic",
+                execute=execute,
+                priority=DELETE_PRIORITY,
+                chat_id=chat_id,
+            )
+        )

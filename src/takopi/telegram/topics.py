@@ -25,7 +25,7 @@ __all__ = [
     "_validate_topics_setup",
 ]
 
-_TOPICS_COMMANDS = {"ctx", "new", "topic"}
+_TOPICS_COMMANDS = {"ctx", "kill", "new", "topic"}
 
 
 def _resolve_topics_scope(cfg: TelegramBridgeConfig) -> tuple[str, frozenset[int]]:

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from .config import ConfigError, ProjectsConfig
+from .config import ConfigError, ProjectConfig, ProjectsConfig
 from .context import RunContext
 from .directives import (
     ParsedDirectives,
@@ -274,6 +274,9 @@ class TransportRuntime:
         if key in self._projects.projects:
             return key
         return None
+
+    def project_config(self, key: str) -> ProjectConfig | None:
+        return self._projects.projects.get(key)
 
     def project_alias_for_key(self, key: str) -> str:
         project = self._projects.projects.get(key)

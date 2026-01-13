@@ -171,7 +171,7 @@ def build_runtime_spec(
     settings: TakopiSettings,
     config_path: Path,
     default_engine_override: str | None = None,
-    reserved: Iterable[str] = ("cancel",),
+    reserved: Iterable[str] = ("cancel", "kill"),
 ) -> RuntimeSpec:
     allowlist = resolve_plugins_allowlist(settings)
     engine_ids = list_backend_ids(allowlist=allowlist)

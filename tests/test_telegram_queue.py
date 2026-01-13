@@ -13,6 +13,7 @@ class _FakeBot(BotClient):
         self.edit_calls: list[str] = []
         self.delete_calls: list[tuple[int, int]] = []
         self.topic_calls: list[tuple[int, int, str]] = []
+        self.topic_delete_calls: list[tuple[int, int]] = []
         self._edit_attempts = 0
         self._updates_attempts = 0
         self.retry_after: float | None = None
@@ -152,6 +153,13 @@ class _FakeBot(BotClient):
     ) -> bool:
         self.calls.append("edit_forum_topic")
         self.topic_calls.append((chat_id, message_thread_id, name))
+        return True
+
+    async def delete_forum_topic(
+        self, chat_id: int, message_thread_id: int
+    ) -> bool:
+        self.calls.append("delete_forum_topic")
+        self.topic_delete_calls.append((chat_id, message_thread_id))
         return True
 
 
